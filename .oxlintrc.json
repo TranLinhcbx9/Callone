@@ -1,28 +1,59 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc", "import", "vitest"],
-  "ignorePatterns": ["dist", ".cache", "supabase", "src/shared/types/database.types.ts"],
+  "plugins": [
+    "react",
+    "typescript",
+    "oxc",
+    "import",
+    "vitest"
+  ],
+  "ignorePatterns": [
+    "dist",
+    ".cache",
+    "supabase",
+    "src/shared/types/database.types.ts"
+  ],
   "rules": {
     "react/rules-of-hooks": "error",
     "react/exhaustive-deps": "warn",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
+    "react/only-export-components": [
+      "warn",
+      {
+        "allowConstantExport": true
+      }
+    ],
+    "vitest/valid-expect": [
+      "error",
+      {
+        "maxArgs": 2
+      }
+    ]
   },
   "overrides": [
     {
-      "files": ["src/**"],
+      "files": [
+        "src/**"
+      ],
       "rules": {
         "import/no-relative-parent-imports": "error"
       }
     },
     {
-      "files": ["src/shared/**"],
+      "files": [
+        "src/shared/**"
+      ],
       "rules": {
         "no-restricted-imports": [
           "error",
           {
             "patterns": [
               {
-                "group": ["@/app", "@/app/**", "@/modules", "@/modules/**"],
+                "group": [
+                  "@/app",
+                  "@/app/**",
+                  "@/modules",
+                  "@/modules/**"
+                ],
                 "message": "shared/ là tầng dùng chung, không được import từ app/ hay modules/."
               }
             ]
@@ -31,8 +62,12 @@
       }
     },
     {
-      "files": ["src/app/**"],
-      "excludeFiles": ["src/app/dev/**"],
+      "files": [
+        "src/app/**"
+      ],
+      "excludeFiles": [
+        "src/app/dev/**"
+      ],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -48,14 +83,22 @@
       }
     },
     {
-      "files": ["src/modules/bill-split/**"],
+      "files": [
+        "src/modules/bill-split/**"
+      ],
       "rules": {
         "no-restricted-imports": [
           "error",
           {
             "patterns": [
               {
-                "group": ["@/app", "@/app/**", "@/modules/**", "!@/modules/bill-split", "!@/modules/bill-split/**"],
+                "group": [
+                  "@/app",
+                  "@/app/**",
+                  "@/modules/**",
+                  "!@/modules/bill-split",
+                  "!@/modules/bill-split/**"
+                ],
                 "message": "Module chỉ được import từ shared/ và chính nó."
               }
             ]

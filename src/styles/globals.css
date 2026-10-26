@@ -1,130 +1,343 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
+@import "./fonts.css";
 
-@custom-variant dark (&:is(.dark *));
+/*
+ * Theme Callone: nền giấy ấm, một màu nhấn chàm (indigo), viền mảnh, bóng rất nhẹ.
+ * Sáng/tối theo hệ thống (prefers-color-scheme), không có nút chuyển tay.
+ * Mô tả đầy đủ và bảng độ tương phản: docs/design/ui-spec.md. Kiểm tra: node scripts/design/contrast.mjs
+ */
+
+/* `dark:` của Tailwind bám theo hệ điều hành thay vì class .dark */
+@custom-variant dark (@media (prefers-color-scheme: dark));
 
 @theme inline {
-    --font-heading: var(--font-sans);
-    --font-sans: 'Geist Variable', sans-serif;
-    --color-sidebar-ring: var(--sidebar-ring);
-    --color-sidebar-border: var(--sidebar-border);
-    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-    --color-sidebar-accent: var(--sidebar-accent);
-    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-    --color-sidebar-primary: var(--sidebar-primary);
-    --color-sidebar-foreground: var(--sidebar-foreground);
-    --color-sidebar: var(--sidebar);
-    --color-chart-5: var(--chart-5);
-    --color-chart-4: var(--chart-4);
-    --color-chart-3: var(--chart-3);
-    --color-chart-2: var(--chart-2);
-    --color-chart-1: var(--chart-1);
-    --color-ring: var(--ring);
-    --color-input: var(--input);
-    --color-border: var(--border);
-    --color-destructive: var(--destructive);
-    --color-accent-foreground: var(--accent-foreground);
-    --color-accent: var(--accent);
-    --color-muted-foreground: var(--muted-foreground);
-    --color-muted: var(--muted);
-    --color-secondary-foreground: var(--secondary-foreground);
-    --color-secondary: var(--secondary);
-    --color-primary-foreground: var(--primary-foreground);
-    --color-primary: var(--primary);
-    --color-popover-foreground: var(--popover-foreground);
-    --color-popover: var(--popover);
-    --color-card-foreground: var(--card-foreground);
-    --color-card: var(--card);
-    --color-foreground: var(--foreground);
-    --color-background: var(--background);
-    --radius-sm: calc(var(--radius) * 0.6);
-    --radius-md: calc(var(--radius) * 0.8);
-    --radius-lg: var(--radius);
-    --radius-xl: calc(var(--radius) * 1.4);
-    --radius-2xl: calc(var(--radius) * 1.8);
-    --radius-3xl: calc(var(--radius) * 2.2);
-    --radius-4xl: calc(var(--radius) * 2.6);
+  /* Font: "Callone Sans" được khai báo trong fonts.css (đổi font ở đó). */
+  --font-sans: 'Callone Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-heading: var(--font-sans);
+}
+
+@theme inline {
+  /* Thang chữ. Thân bài 15px, ô nhập trên điện thoại giữ 16px (text-base) để iPhone không tự phóng to. */
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1.0625rem;
+  --text-small: 0.8125rem;
+  --text-small--line-height: 1.25rem;
+  --text-body: 0.9375rem;
+  --text-body--line-height: 1.4rem;
+  --text-title: 1.0625rem;
+  --text-title--line-height: 1.5rem;
+  --text-title--letter-spacing: -0.006em;
+  --text-headline: 1.375rem;
+  --text-headline--line-height: 1.75rem;
+  --text-headline--letter-spacing: -0.012em;
+  --text-display: 1.875rem;
+  --text-display--line-height: 2.25rem;
+  --text-display--letter-spacing: -0.02em;
+
+  /* Màu: ánh xạ biến thô sang tên utility của Tailwind (bg-card, text-muted-foreground...) */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-soft-foreground: var(--primary-soft-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-positive: var(--positive);
+  --color-positive-soft: var(--positive-soft);
+  --color-negative: var(--negative);
+  --color-negative-soft: var(--negative-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Bo góc: nút và ô nhập rounded-lg (12px), thẻ rounded-xl (17px), ngăn kéo và hộp thoại rounded-2xl. */
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* Độ nổi: viền làm phần lớn việc, bóng chỉ đủ để tách lớp. */
+  --shadow-xs: 0 1px 1px 0 oklch(0.3 0.02 75 / 0.04);
+  --shadow-sm: 0 1px 2px 0 oklch(0.3 0.02 75 / 0.05), 0 1px 3px 0 oklch(0.3 0.02 75 / 0.04);
+  --shadow-md: 0 2px 4px -1px oklch(0.3 0.02 75 / 0.05), 0 6px 16px -4px oklch(0.3 0.02 75 / 0.09);
+  --shadow-lg: 0 4px 8px -2px oklch(0.3 0.02 75 / 0.05), 0 16px 40px -8px oklch(0.3 0.02 75 / 0.14);
+
+  /* Chuyển động: ra nhanh, vào mượt */
+  --ease-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
 }
 
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+  color-scheme: light dark;
+
+  --radius: 0.75rem;
+  /* Bề rộng thanh bên (chỉ có từ màn hình lg). Các thanh nổi cố định dùng biến này để canh giữa cột nội dung. */
+  --app-rail: 0px;
+  /* Bề rộng cột nội dung chính. Header dính, thanh nổi và trang đều canh theo biến này. */
+  --app-column: 44rem;
+
+  /* Nền và chữ */
+  --background: oklch(0.975 0.004 85);
+  --foreground: oklch(0.24 0.01 75);
+  --card: oklch(0.995 0.002 85);
+  --card-foreground: oklch(0.24 0.01 75);
+  --popover: oklch(0.998 0.001 85);
+  --popover-foreground: oklch(0.24 0.01 75);
+  --muted: oklch(0.953 0.005 85);
+  --muted-foreground: oklch(0.5 0.012 75);
+  --secondary: oklch(0.953 0.005 85);
+  --secondary-foreground: oklch(0.3 0.01 75);
+  --accent: oklch(0.945 0.006 85);
+  --accent-foreground: oklch(0.24 0.01 75);
+  --border: oklch(0.912 0.006 82);
+  --input: oklch(0.885 0.007 82);
+
+  /* Màu nhấn duy nhất: chàm */
+  --primary: oklch(0.47 0.12 268);
+  --primary-foreground: oklch(0.985 0.005 268);
+  --primary-soft: oklch(0.951 0.026 268);
+  --primary-soft-foreground: oklch(0.4 0.12 268);
+  --ring: oklch(0.6 0.11 268);
+
+  /* Ngữ nghĩa số dư: dịu, không chói */
+  --positive: oklch(0.49 0.1 158);
+  --positive-soft: oklch(0.955 0.03 158);
+  --negative: oklch(0.52 0.125 32);
+  --negative-soft: oklch(0.962 0.026 35);
+  --warning: oklch(0.5 0.1 68);
+  --warning-soft: oklch(0.962 0.045 88);
+  --destructive: oklch(0.55 0.19 27);
+  --destructive-foreground: oklch(0.985 0.005 27);
+
+  --chart-1: oklch(0.47 0.12 268);
+  --chart-2: oklch(0.62 0.1 268);
+  --chart-3: oklch(0.49 0.1 158);
+  --chart-4: oklch(0.52 0.125 32);
+  --chart-5: oklch(0.5 0.1 68);
+
+  /* Thanh bên desktop */
+  --sidebar: oklch(0.965 0.005 85);
+  --sidebar-foreground: oklch(0.24 0.01 75);
+  --sidebar-primary: oklch(0.47 0.12 268);
+  --sidebar-primary-foreground: oklch(0.985 0.005 268);
+  --sidebar-accent: oklch(0.935 0.007 85);
+  --sidebar-accent-foreground: oklch(0.24 0.01 75);
+  --sidebar-border: oklch(0.912 0.006 82);
+  --sidebar-ring: oklch(0.6 0.11 268);
 }
 
-.dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(0.18 0.006 75);
+    --foreground: oklch(0.94 0.006 85);
+    --card: oklch(0.22 0.007 75);
+    --card-foreground: oklch(0.94 0.006 85);
+    --popover: oklch(0.255 0.008 75);
+    --popover-foreground: oklch(0.94 0.006 85);
+    --muted: oklch(0.265 0.008 75);
+    --muted-foreground: oklch(0.72 0.01 80);
+    --secondary: oklch(0.265 0.008 75);
+    --secondary-foreground: oklch(0.9 0.006 85);
+    --accent: oklch(0.3 0.008 75);
+    --accent-foreground: oklch(0.94 0.006 85);
+    --border: oklch(0.95 0.01 85 / 0.1);
+    --input: oklch(0.95 0.01 85 / 0.15);
+
+    --primary: oklch(0.76 0.1 268);
+    --primary-foreground: oklch(0.2 0.04 268);
+    --primary-soft: oklch(0.3 0.05 268);
+    --primary-soft-foreground: oklch(0.87 0.07 268);
+    --ring: oklch(0.7 0.1 268);
+
+    --positive: oklch(0.76 0.1 158);
+    --positive-soft: oklch(0.3 0.045 158);
+    --negative: oklch(0.76 0.095 30);
+    --negative-soft: oklch(0.3 0.045 30);
+    --warning: oklch(0.8 0.11 85);
+    --warning-soft: oklch(0.3 0.05 85);
+    --destructive: oklch(0.72 0.16 25);
+    --destructive-foreground: oklch(0.2 0.03 25);
+
+    --chart-1: oklch(0.76 0.1 268);
+    --chart-2: oklch(0.6 0.1 268);
+    --chart-3: oklch(0.76 0.1 158);
+    --chart-4: oklch(0.76 0.095 30);
+    --chart-5: oklch(0.8 0.11 85);
+
+    --sidebar: oklch(0.2 0.006 75);
+    --sidebar-foreground: oklch(0.94 0.006 85);
+    --sidebar-primary: oklch(0.76 0.1 268);
+    --sidebar-primary-foreground: oklch(0.2 0.04 268);
+    --sidebar-accent: oklch(0.28 0.008 75);
+    --sidebar-accent-foreground: oklch(0.94 0.006 85);
+    --sidebar-border: oklch(0.95 0.01 85 / 0.1);
+    --sidebar-ring: oklch(0.7 0.1 268);
+  }
+}
+
+@media (min-width: 64rem) {
+  :root {
+    --app-rail: 15rem;
+  }
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
-    }
-  body {
-    @apply bg-background text-foreground;
-    }
+  }
+
   html {
     @apply font-sans;
-    }
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    min-height: 100dvh;
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  button,
+  a,
+  input,
+  select,
+  textarea,
+  label,
+  [role='button'],
+  [role='tab'] {
+    touch-action: manipulation;
+  }
+
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']) {
+    cursor: pointer;
+  }
+
+  ::selection {
+    background: color-mix(in oklch, var(--primary) 24%, transparent);
+  }
+
+  /* Ô ngày gốc của trình duyệt: giữ chiều cao và canh trái như ô chữ để iOS không vẽ lệch */
+  input[type='date'] {
+    appearance: none;
+    -webkit-appearance: none;
+    min-height: 2.5rem;
+  }
+
+  input[type='date']::-webkit-date-and-time-value {
+    text-align: left;
+  }
+
+  input[type='date']::-webkit-calendar-picker-indicator {
+    opacity: 0.55;
+  }
+}
+
+/* Vùng an toàn của tai thỏ và thanh home (viewport-fit=cover) */
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+@utility pl-safe {
+  padding-left: env(safe-area-inset-left);
+}
+@utility pr-safe {
+  padding-right: env(safe-area-inset-right);
+}
+
+/* Số liền hàng, canh thẳng cột cho tiền */
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* Màu avatar thành viên: pastel dịu, sinh từ góc màu --avatar-hue (0 đến 360) của từng id */
+@utility avatar-tone {
+  background-color: oklch(0.925 0.042 var(--avatar-hue, 268));
+  color: oklch(0.4 0.09 var(--avatar-hue, 268));
+  @media (prefers-color-scheme: dark) {
+    background-color: oklch(0.34 0.062 var(--avatar-hue, 268));
+    color: oklch(0.89 0.07 var(--avatar-hue, 268));
+  }
+}
+
+/* Toast (sonner): lấy màu và bo góc từ theme, kể cả khi Toaster mặc định chưa được thay bằng bản trong shared/ui/sonner */
+:root [data-sonner-toaster][data-sonner-theme] {
+  --normal-bg: var(--popover);
+  --normal-text: var(--popover-foreground);
+  --normal-border: var(--border);
+  --border-radius: var(--radius-xl);
+  --success-bg: var(--popover);
+  --success-text: var(--popover-foreground);
+  --success-border: var(--border);
+  --error-bg: var(--popover);
+  --error-text: var(--popover-foreground);
+  --error-border: var(--border);
+  --info-bg: var(--popover);
+  --info-text: var(--popover-foreground);
+  --info-border: var(--border);
+  --warning-bg: var(--popover);
+  --warning-text: var(--popover-foreground);
+  --warning-border: var(--border);
+  font-family: var(--font-sans);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

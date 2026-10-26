@@ -1,0 +1,11 @@
+/*
+ * CHỌN FONT CỦA APP: đổi đúng một dòng @import dưới đây, không cần sửa gì khác.
+ * Mọi font đều được đặt tên chung là "Callone Sans" nên globals.css không phải đổi.
+ *
+ *   ./fonts/plus-jakarta-sans.css   Plus Jakarta Sans
+ *   ./fonts/be-vietnam-pro.css      Be Vietnam Pro
+ *   ./fonts/inter.css               Inter
+ *
+ * Xem so sánh 3 font ở /dev/fonts khi chạy dev.
+ */
+@import "./fonts/plus-jakarta-sans.css";
