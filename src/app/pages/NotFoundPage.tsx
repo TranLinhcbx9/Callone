@@ -1,13 +1,22 @@
-import { Link } from 'react-router'
+import { AppLink } from '@/shared/ui/AppLink'
+import { ErrorState } from '@/shared/ui/EmptyState'
+import { PageBody } from '@/shared/ui/PageBody'
+import { Button } from '@/shared/ui/button'
 
+/** Đường dẫn không khớp trang nào. */
 export function NotFoundPage() {
   return (
-    <section className="mx-auto max-w-md px-4 py-16 text-center">
-      <h1 className="text-lg font-semibold">Không tìm thấy trang</h1>
-      <p className="mt-2 text-sm opacity-70">Đường dẫn này không tồn tại.</p>
-      <Link to="/" className="mt-6 inline-block underline">
-        Về trang chủ
-      </Link>
-    </section>
+    <PageBody>
+      <ErrorState
+        className="pt-24"
+        title="Không tìm thấy trang"
+        description="Đường dẫn này không tồn tại."
+        action={
+          <Button asChild>
+            <AppLink href="/">Về trang chủ</AppLink>
+          </Button>
+        }
+      />
+    </PageBody>
   )
 }

@@ -1,26 +1,37 @@
-import { isRouteErrorResponse, Link, useRouteError } from 'react-router'
+import { isRouteErrorResponse, useRouteError } from 'react-router'
+import { ErrorState } from '@/shared/ui/EmptyState'
+import { PageBody } from '@/shared/ui/PageBody'
+import { Button } from '@/shared/ui/button'
 
 /** Lỗi khi render hoặc tải trang. Mỗi module có error boundary riêng nên lỗi không lan ra cả app. */
 export function RouteError() {
   const error = useRouteError()
-  const message = isRouteErrorResponse(error)
+  const detail = isRouteErrorResponse(error)
     ? `${error.status} ${error.statusText}`
     : error instanceof Error
       ? error.message
-      : 'Có lỗi xảy ra.'
+      : null
 
   return (
-    <section className="mx-auto max-w-md px-4 py-16 text-center">
-      <h1 className="text-lg font-semibold">Có lỗi xảy ra</h1>
-      <p className="mt-2 text-sm opacity-70">{message}</p>
-      <div className="mt-6 flex justify-center gap-4">
-        <button type="button" className="underline" onClick={() => window.location.reload()}>
-          Tải lại trang
-        </button>
-        <Link to="/" className="underline">
-          Về trang chủ
-        </Link>
-      </div>
-    </section>
+    <PageBody>
+      <ErrorState
+        className="pt-24"
+        title="Có lỗi xảy ra"
+        description={
+          <>
+            Thử tải lại trang. Nếu vẫn lỗi, mở lại app sau ít phút.
+            {detail && <span className="mt-2 block text-caption break-words text-muted-foreground/80">{detail}</span>}
+          </>
+        }
+        onRetry={() => window.location.reload()}
+        retryLabel="Tải lại trang"
+        action={
+          // Thẻ <a> thường chứ không phải Link của router: lỗi có thể đến từ chính router, về trang chủ phải tải mới hoàn toàn.
+          <Button variant="ghost" asChild>
+            <a href="/">Về trang chủ</a>
+          </Button>
+        }
+      />
+    </PageBody>
   )
 }

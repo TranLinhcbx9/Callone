@@ -5,6 +5,9 @@
  * - Lỗi luôn ném AppError qua toAppError (BS_* cho lỗi nghiệp vụ, NETWORK cho rớt mạng).
  * - Tham số tùy chọn rỗng thì không gửi, để SQL dùng giá trị mặc định null.
  * - Mọi hàm ghi trả về Group mới nhất, hook dùng luôn để cập nhật cache, không cần gọi lại.
+ * - Hợp đồng v1.1: bs_create_group nhận p_token và bs_rotate_token nhận p_new_token do client chọn, gửi lại cùng
+ *   token thì server trả đúng kết quả cũ. Hai hàm này vì thế gửi lại được an toàn khi rớt mạng, miễn là người gọi
+ *   giữ token và gửi lại y nguyên (xem hooks/mutationOptions.ts và hooks/rotation.ts).
  * Tham số được gán vào biến có kiểu Database['public']['Functions'][...]['Args'], nên khi agent supabase
  * sinh lại database.types.ts mà chữ ký hàm lệch, tsc báo lỗi ngay ở đây.
  */
@@ -16,8 +19,10 @@ import {
   parseSnapshot,
   toGroup,
 } from '@/modules/bill-split/api/mappers'
+import { compareTimestamps } from '@/modules/bill-split/api/timestamp'
+import { newGroupToken } from '@/modules/bill-split/api/token'
+import { normalizeBankAccount } from '@/modules/bill-split/domain/bankAccount'
 import type { CreateGroupInput, ExpenseInput, MemberInput, SettlementInput } from '@/modules/bill-split/domain/inputs'
-import { normalizeAccountName, normalizeAccountNumber } from '@/modules/bill-split/domain/text'
 import type { Group, GroupSummary } from '@/modules/bill-split/domain/types'
 import { toAppError } from '@/shared/lib/errors'
 import { supabase } from '@/shared/lib/supabase'
@@ -57,11 +62,17 @@ function optionalText(text: string | null | undefined): string | undefined {
   return trimmed ? trimmed : undefined
 }
 
-/** Không tự thử lại: gửi lại sẽ tạo thêm một nhóm nữa. Tầng hook không bao giờ retry hàm này. */
+/**
+ * Tạo nhóm với token do client chọn: input.token, hoặc token mới sinh ở đây nếu bỏ trống (luôn gửi p_token).
+ * Gửi lại đúng token đó thì server trả nhóm đã tạo thay vì tạo thêm (và không tính vào giới hạn tốc độ), nên thử lại
+ * sau khi rớt mạng là an toàn. Mỗi lần gọi không có input.token là một token mới, nên người muốn thử lại phải giữ
+ * token và truyền vào. Token đã thuộc một nhóm đã xóa thì BS_INVALID token/id_taken: phải chọn token khác.
+ */
 export async function createGroup(input: CreateGroupInput): Promise<{ token: string; group: Group }> {
   const args: Functions['bs_create_group']['Args'] = {
     p_name: input.name.trim(),
     p_member_names: input.memberNames.map((name) => name.trim()),
+    p_token: input.token ? input.token : newGroupToken(),
   }
   return parseCreateGroupResult(await call('bs_create_group', args))
 }
@@ -70,21 +81,47 @@ export async function getGroup(token: string): Promise<Group> {
   return callForGroup('bs_get_group', { p_token: token })
 }
 
-/** Tóm tắt các nhóm đã lưu trên máy. Token sai hoặc nhóm đã xóa bị server bỏ qua. Tối đa 50 token mỗi lần. */
+/** Mới cập nhật trước. Mốc không đọc được thì giữ nguyên thứ tự (sort ổn định). */
+function byUpdatedAtDesc(a: GroupSummary, b: GroupSummary): number {
+  return compareTimestamps(b.updatedAt, a.updatedAt) ?? 0
+}
+
+/**
+ * Tóm tắt các nhóm đã lưu trên máy. Token sai hoặc nhóm đã xóa bị server bỏ qua. Server nhận tối đa 50 token mỗi lần,
+ * nên danh sách dài hơn được chia thành các lô 50 gọi song song rồi gộp lại, nhóm cập nhật mới nhất trước.
+ * Người gọi truyền bao nhiêu token cũng được. Một lô lỗi thì cả lượt lỗi, để không ai tưởng nhầm các nhóm
+ * của lô đó đã bị xóa.
+ */
 export async function getGroupSummaries(tokens: readonly string[]): Promise<GroupSummary[]> {
-  const unique = [...new Set(tokens)].slice(0, BS_LIMITS.tokensPerLookup)
-  if (unique.length === 0) return []
-  const args: Functions['bs_get_groups']['Args'] = { p_tokens: unique }
-  return parseGroupSummaries(await call('bs_get_groups', args))
+  const unique = [...new Set(tokens)]
+  const batches: string[][] = []
+  for (let start = 0; start < unique.length; start += BS_LIMITS.tokensPerLookup) {
+    batches.push(unique.slice(start, start + BS_LIMITS.tokensPerLookup))
+  }
+  const results = await Promise.all(
+    batches.map(async (batch) => {
+      const args: Functions['bs_get_groups']['Args'] = { p_tokens: batch }
+      return parseGroupSummaries(await call('bs_get_groups', args))
+    }),
+  )
+  const [first] = results
+  if (results.length === 1 && first) return first
+  return results.flat().sort(byUpdatedAtDesc)
 }
 
 export async function updateGroup(token: string, name: string): Promise<Group> {
   return callForGroup('bs_update_group', { p_token: token, p_name: name.trim() })
 }
 
-/** Trả token mới. Token cũ hết hiệu lực ngay, nên không tự thử lại: mất phản hồi là mất link mới. */
-export async function rotateToken(token: string): Promise<string> {
-  return parseRotateTokenResult(await call('bs_rotate_token', { p_token: token }))
+/**
+ * Đổi link: trả token mới, token cũ hết hiệu lực ngay. Nên truyền newToken do client chọn và ghi nhớ trước khi gọi
+ * (hợp đồng v1.1): gửi lại đúng cặp (token, newToken) là an toàn, vì nếu lần trước đã đổi xong mà mất phản hồi thì
+ * server nhận ra token mới đã có và trả luôn nó (BS_GROUP_NOT_FOUND chỉ khi cả hai cùng không còn). Không truyền
+ * newToken thì server tự sinh, và mất phản hồi là mất link mới.
+ */
+export async function rotateToken(token: string, newToken?: string): Promise<string> {
+  const args: Functions['bs_rotate_token']['Args'] = { p_token: token, ...(newToken ? { p_new_token: newToken } : {}) }
+  return parseRotateTokenResult(await call('bs_rotate_token', args))
 }
 
 export async function deleteGroup(token: string): Promise<void> {
@@ -93,16 +130,14 @@ export async function deleteGroup(token: string): Promise<void> {
 
 /** Tạo thành viên mới (id chưa có) hoặc ghi đè (id đã có). bank null nghĩa là xóa thông tin ngân hàng. */
 export async function saveMember(token: string, member: MemberInput): Promise<Group> {
-  const bank = member.bank
-  const accountName = bank ? optionalText(normalizeAccountName(bank.accountName ?? '')) : undefined
+  // Cùng hàm chuẩn hóa mà storage dùng để nhớ ngân hàng gần nhất, nên thứ gửi lên và thứ nhớ lại luôn giống nhau.
+  const bank = member.bank ? normalizeBankAccount(member.bank) : null
   const args: Functions['bs_save_member']['Args'] = {
     p_token: token,
     p_member_id: member.id,
     p_name: member.name.trim(),
-    ...(bank
-      ? { p_bank_bin: bank.bin, p_bank_account: normalizeAccountNumber(bank.accountNumber) }
-      : {}),
-    ...(accountName ? { p_bank_account_name: accountName } : {}),
+    ...(bank ? { p_bank_bin: bank.bin, p_bank_account: bank.accountNumber } : {}),
+    ...(bank?.accountName ? { p_bank_account_name: bank.accountName } : {}),
   }
   return callForGroup('bs_save_member', args)
 }

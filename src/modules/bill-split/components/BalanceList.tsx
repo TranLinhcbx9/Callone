@@ -1,6 +1,7 @@
 import { CheckCircle2Icon } from 'lucide-react'
 import type { Member, MemberBalance } from '@/modules/bill-split/domain/types'
 import { formatVnd } from '@/shared/lib/format'
+import { EmptyState } from '@/shared/ui/EmptyState'
 import { ListGroup } from '@/shared/ui/ListRow'
 import { MemberAvatar } from '@/shared/ui/MemberAvatar'
 import { MoneyText } from '@/shared/ui/MoneyText'
@@ -22,9 +23,22 @@ export function BalanceList({ members, balances, meId }: BalanceListProps) {
   const rows = [...balances].sort((a, b) => b.net - a.net)
   const settled = rows.every((row) => row.net === 0)
 
+  // Nhóm không còn ai (xóa hết thành viên) thì không có gì để tính, chỉ nhắc thêm người.
+  if (rows.length === 0) {
+    return (
+      <div className="rounded-xl border border-border bg-card shadow-xs">
+        <EmptyState
+          compact
+          title="Chưa có thành viên nào"
+          description="Thêm người ở tab Thành viên để bắt đầu tính số dư."
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-3">
-      {settled && rows.length > 0 && (
+      {settled && (
         <Notice tone="positive" icon={false}>
           <span className="flex items-center gap-2">
             <CheckCircle2Icon className="size-4 shrink-0" />

@@ -8,6 +8,12 @@ export interface CreateGroupInput {
   name: string
   /** Tên thành viên ban đầu, theo thứ tự hiển thị. */
   memberNames: string[]
+  /**
+   * Token do client chọn cho nhóm mới (newGroupToken()), gửi là p_token từ hợp đồng v1.1. Gửi lại cùng token thì server
+   * trả đúng nhóm đã tạo thay vì tạo thêm, nên form giữ nguyên token giữa các lần bấm cho cùng một nội dung.
+   * Bỏ trống thì rpc tự sinh token mới cho mỗi lần gọi.
+   */
+  token?: string
 }
 
 /** Tạo mới (id chưa có trong nhóm) hoặc ghi đè (id đã có) một thành viên cùng thông tin ngân hàng. */

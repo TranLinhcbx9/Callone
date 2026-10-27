@@ -35,7 +35,8 @@ export function useGroup(token: string | undefined) {
 
 /**
  * Tóm tắt các nhóm đã lưu trên máy, cho trang Home. Token sai hoặc nhóm đã xóa bị server bỏ qua nên không có
- * trong kết quả. Giữ kết quả cũ trong lúc danh sách token đổi để danh sách không nhấp nháy.
+ * trong kết quả. Giữ kết quả cũ trong lúc danh sách token đổi để danh sách không nhấp nháy. Danh sách dài hơn 50 token
+ * được rpc.getGroupSummaries tự chia lô và gộp lại.
  */
 export function useGroupSummaries(tokens: readonly string[]) {
   return useQuery<GroupSummary[], AppError>({

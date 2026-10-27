@@ -12,10 +12,12 @@ export interface PasteLinkFormProps {
   isSubmitting?: boolean
   /** Ví dụ "Link này không đúng hoặc nhóm đã bị xóa." */
   error?: string | null
+  /** Focus sẵn vào ô dán, ví dụ khi người dùng bấm "Dán link khác" từ trang không tìm thấy nhóm. */
+  autoFocus?: boolean
 }
 
 /** Ô dán link nhóm. Nút Dán đọc clipboard nếu trình duyệt cho phép. Dành cho nhóm bạn bè gửi qua Zalo, Messenger. */
-export function PasteLinkForm({ value, onChange, onSubmit, isSubmitting, error }: PasteLinkFormProps) {
+export function PasteLinkForm({ value, onChange, onSubmit, isSubmitting, error, autoFocus }: PasteLinkFormProps) {
   function submit(event: FormEvent) {
     event.preventDefault()
     onSubmit()
@@ -47,6 +49,7 @@ export function PasteLinkForm({ value, onChange, onSubmit, isSubmitting, error }
             value={value}
             onChange={(event) => onChange(event.target.value)}
             placeholder="Dán link nhóm"
+            autoFocus={autoFocus}
             inputMode="url"
             autoCapitalize="off"
             autoCorrect="off"

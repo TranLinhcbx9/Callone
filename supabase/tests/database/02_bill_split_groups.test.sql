@@ -1,5 +1,7 @@
--- Chia tiền: tạo, đọc, đổi tên, đổi token, xóa nhóm; token; giới hạn tốc độ; hình dạng snapshot
+-- Chia tiền: tạo, đọc, đổi tên, đổi token, xóa nhóm; token; hình dạng snapshot
 -- (hợp đồng mục 1, 5, 6, 7 và 9). Mọi lời gọi API chạy dưới vai trò anon như trình duyệt.
+-- Tạo nhóm với token do client sinh và giới hạn tốc độ có test riêng ở 09, đổi token với token do client
+-- chọn ở 10. File này chỉ dùng đường mặc định (server tự sinh token).
 begin;
 set local search_path = public, extensions;
 
@@ -7,7 +9,7 @@ set local search_path = public, extensions;
 -- mọi vi phạm khóa ngoại của hàm API lộ ra tại câu lệnh gây lỗi, không chờ tới commit (test luôn rollback).
 set constraints all immediate;
 
-select plan(110);
+select plan(103);
 
 -- ---------------------------------------------------------------------------
 -- Helper (chỉ tồn tại trong transaction này)
@@ -115,8 +117,11 @@ as $$
   select array_agg(k order by k) from jsonb_object_keys(p_json) as k;
 $$;
 
--- Làm "cũ" mọi nhóm sẵn có (seed, dữ liệu dev) để giới hạn tốc độ không bị ảnh hưởng. Rollback ở cuối.
-update bill_split.groups set created_at = created_at - interval '1 hour';
+-- File này tạo nhiều nhóm từ cùng một "client": nâng giới hạn tạo nhóm để kết quả không phụ thuộc seed hay
+-- dữ liệu dev (giới hạn tốc độ được kiểm ở 09). Rollback ở cuối.
+insert into bill_split.settings (key, value)
+values ('create_limit_client', 1000000), ('create_limit_global', 1000000)
+on conflict (key) do update set value = excluded.value;
 
 set local role anon;
 
@@ -474,43 +479,6 @@ select is(
   'bs_delete_group: không đụng tới nhóm khác'
 );
 set local role anon;
-
--- ---------------------------------------------------------------------------
--- Giới hạn tốc độ tạo nhóm: từ 30 nhóm trong 10 phút gần nhất thì BS_RATE_LIMITED (kể cả nhóm đã xóa)
--- ---------------------------------------------------------------------------
-reset role;
-update bill_split.groups set created_at = created_at - interval '1 hour';
-insert into bill_split.groups (name, token_hash)
-select 'Rate ' || g, sha256(convert_to('rate-limit-fill-' || lpad(g::text, 8, '0'), 'UTF8'))
-  from generate_series(1, 29) g;
-set local role anon;
-
-select lives_ok($$select public.bs_create_group('Nhóm thứ 30', array['A'])$$, 'rate limit: nhóm thứ 30 trong 10 phút vẫn tạo được');
-select pg_temp.throws(
-  $$select public.bs_create_group('Nhóm thứ 31', array['A'])$$,
-  'PT429', 'BS_RATE_LIMITED', null,
-  'rate limit: từ 30 nhóm trong 10 phút thì BS_RATE_LIMITED (PT429)'
-);
-select pg_temp.throws(
-  $$select public.bs_create_group('', array[]::text[])$$,
-  'PT429', 'BS_RATE_LIMITED', null,
-  'rate limit: được kiểm trước khi kiểm dữ liệu'
-);
-reset role;
-select is((select count(*) from bill_split.groups g where g.created_at > now() - interval '10 minutes'), 30::bigint, 'rate limit: lần bị từ chối không tạo thêm nhóm');
-set local role anon;
-
-select lives_ok($$select public.bs_delete_group('rate-limit-fill-00000001')$$, 'rate limit: xóa mềm một nhóm vừa tạo');
-select pg_temp.throws(
-  $$select public.bs_create_group('Nhóm thứ 31', array['A'])$$,
-  'PT429', 'BS_RATE_LIMITED', null,
-  'rate limit: nhóm đã xóa vẫn được tính vào giới hạn'
-);
-
-reset role;
-update bill_split.groups set created_at = now() - interval '11 minutes' where created_at > now() - interval '10 minutes';
-set local role anon;
-select lives_ok($$select public.bs_create_group('Nhóm sau cửa sổ', array['A'])$$, 'rate limit: hết cửa sổ 10 phút thì tạo lại được');
 
 select * from finish();
 rollback;

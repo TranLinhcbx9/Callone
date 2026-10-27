@@ -71,17 +71,87 @@ describe('parseMoney: dấu thập phân trước đơn vị', () => {
     ['1.50tr', 1_500_000],
     ['1.5k', 1_500],
     ['2.25k', 2_250],
-    ['2.050k', 2_050],
     ['1.25 tỷ', 1_250_000_000],
-    ['1.000k', 1_000],
-    ['1,000k', 1_000],
     ['1.0k', 1_000],
     ['1.0000k', 1_000],
     ['1.0005 tỷ', 1_000_500_000],
     ['0.001 tỷ', 1_000_000],
     ['12.345 triệu', 12_345_000],
+    // tr và triệu giữ nguyên cách đọc thập phân dù sau dấu có đúng 3 chữ số
+    ['1.500tr', 1_500_000],
+    ['1,500 triệu', 1_500_000],
+    ['2.050tr', 2_050_000],
+    ['1.000tr', 1_000_000],
   ])('%j thành %i', (input, expected) => {
     expect(parseMoney(input)).toEqual(ok(expected))
+  })
+})
+
+describe('parseMoney: nghìn có dấu hàng nghìn ("1.500k" là một triệu rưỡi)', () => {
+  it.each<[string, number]>([
+    // dấu theo sau đúng 3 chữ số là dấu hàng nghìn của số, không phải dấu thập phân
+    ['1.500k', 1_500_000],
+    ['1,500k', 1_500_000],
+    ['1.200 nghìn', 1_200_000],
+    ['1.200 ngàn', 1_200_000],
+    ['1.200 nghin', 1_200_000],
+    ['1.200 ngan', 1_200_000],
+    ['15.000k', 15_000_000],
+    ['15,000 K', 15_000_000],
+    ['100.000k', 100_000_000],
+    ['999.999k', 999_999_000],
+    ['2.050k', 2_050_000],
+    ['1.000k', 1_000_000],
+    ['1,000k', 1_000_000],
+    ['12.345 nghìn', 12_345_000],
+    ['  1.500k  ', 1_500_000],
+    ['1.500 k', 1_500_000],
+    ['1.500k đ', 1_500_000],
+    ['1.500kVND', 1_500_000],
+    ['1.500 NGHÌN'.normalize('NFD'), 1_500_000],
+    // một hay hai chữ số sau dấu vẫn là phần thập phân của nghìn
+    ['1.5k', 1_500],
+    ['1,5k', 1_500],
+    ['15.5k', 15_500],
+    ['2.25k', 2_250],
+    ['12.34 nghìn', 12_340],
+    ['1.0k', 1_000],
+    ['1.00k', 1_000],
+    // quá 3 chữ số sau dấu: thập phân, số 0 thừa ở cuối thì bỏ
+    ['1.0000k', 1_000],
+    ['1.5000k', 1_500],
+    // phần nguyên không phải 1 tới 3 chữ số khác 0 thì không thể là nhóm hàng nghìn, đọc thập phân
+    ['0.500k', 500],
+    ['0,250k', 250],
+    ['1234.567k', 1_234_567],
+    ['01.500k', 1_500],
+    // chỉ cụm đứng đầu mới có quy tắc này, cụm sau vẫn là thập phân
+    ['1tr 2.500k', 1_002_500],
+    ['1 tỷ 5.500k', 1_000_005_500],
+  ])('%j thành %i', (input, expected) => {
+    expect(parseMoney(input)).toEqual(ok(expected))
+  })
+
+  it('nhóm hàng nghìn không nhận thêm chữ số lẻ và không được nhóm tiếp', () => {
+    for (const input of ['1.500k5', '1.500k 5', '1.500k 200', '1.500.000k', '1.500,5k', '1.500k200', '1.500k1.500k']) {
+      expect(parseMoney(input), input).toEqual(fail('invalid'))
+    }
+  })
+
+  it('phần nguyên bằng 0 không phải nhóm hàng nghìn, nên "0.000k" vẫn là số 0', () => {
+    expect(parseMoney('0.000k')).toEqual(fail('zero'))
+    expect(parseMoney('0,000 nghìn')).toEqual(fail('zero'))
+  })
+
+  it('khớp phép tính BigInt độc lập trên mọi cặp (phần đầu, nhóm 3 số), mọi tên đơn vị và cả hai loại dấu', () => {
+    const rng = createRng(1500)
+    const names = ['k', 'K', 'nghìn', 'NGHÌN', 'ngàn', 'nghin', 'ngan', 'Nghìn']
+    for (let i = 0; i < 3000; i++) {
+      const head = rng.int(1, 999)
+      const group = String(rng.int(0, 999)).padStart(3, '0')
+      const text = `${head}${rng.pick(['.', ','])}${group}${rng.pick(['', ' '])}${rng.pick(names)}`
+      expect(parseMoney(text), text).toEqual(ok((head * 1000 + Number(group)) * 1000))
+    }
   })
 })
 
@@ -204,6 +274,8 @@ describe('parseMoney: lỗi', () => {
     ['0,120', 'fraction'],
     ['1.200.00', 'fraction'],
     ['1.000.5', 'fraction'],
+    ['1.200.000.5', 'fraction'],
+    ['1,200,000,50', 'fraction'],
     ['1.200,5', 'fraction'],
     ['1,200.50', 'fraction'],
     ['1.0005k', 'fraction'],
@@ -259,6 +331,15 @@ describe('parseMoney: lỗi', () => {
     ['.5tr', 'invalid'],
     [',5k', 'invalid'],
     ['1.2.3tr', 'invalid'],
+    ['1.2.3k', 'invalid'],
+    // không đơn vị mà dấu lặp lại không theo kiểu hàng nghìn: sai dạng chứ không phải số lẻ
+    ['1.2.3', 'invalid'],
+    ['1,2,3', 'invalid'],
+    ['1.2.3.4', 'invalid'],
+    ['12.34.56', 'invalid'],
+    ['1.2345.678', 'invalid'],
+    ['0.200.000', 'invalid'],
+    ['1234.567.890', 'invalid'],
     ['1.5tr2', 'invalid'],
     ['1tr 2 3', 'invalid'],
     ['1 000', 'invalid'],
@@ -354,12 +435,18 @@ describe('parseMoney: số thập phân trước đơn vị, kiểm tra ngẫu n
       for (let d = 0; d < fractionLength; d++) fraction += String(rng.int(0, 9))
       const integer = String(rng.int(0, 50))
       const text = `${integer}.${fraction}${unit.name}`
+      // Nghìn: phần nguyên khác 0 và đúng 3 chữ số sau dấu là nhóm hàng nghìn ("2.500k" = 2.500.000), không phải phần lẻ.
+      const thousandsGroup = unit.name === 'k' && fraction.length === 3 && integer !== '0'
       const trimmed = fraction.replace(/0+$/, '')
       const whole = BigInt(integer) * 10n ** BigInt(unit.exponent)
       const part = BigInt(trimmed || '0') * 10n ** BigInt(Math.max(unit.exponent - trimmed.length, 0))
-      const exact = whole + part
+      const exact = thousandsGroup ? BigInt(integer + fraction) * 1000n : whole + part
       const expected =
-        trimmed.length > unit.exponent ? fail('fraction') : exact === 0n ? fail('zero') : ok(Number(exact))
+        !thousandsGroup && trimmed.length > unit.exponent
+          ? fail('fraction')
+          : exact === 0n
+            ? fail('zero')
+            : ok(Number(exact))
       expect(parseMoney(text), text).toEqual(expected)
     }
   })

@@ -9,8 +9,12 @@
  * - Có đơn vị: dấu . hoặc , là dấu thập phân ("1.5tr", "1,5tr", "1.005tr" = 1.005.000).
  *   Chữ số đứng sau đơn vị cuối là phần thập phân của đơn vị đó ("1tr2" = 1.2tr, "2k05" = 2.050).
  *   Nhiều cụm có đơn vị giảm dần thì cộng lại ("1tr200k", "1 tỷ 2 triệu").
+ * - Ngoại lệ cho k, nghìn, ngàn (đứng đầu chuỗi): dấu . hoặc , theo sau đúng 3 chữ số là dấu hàng nghìn, vì người Việt
+ *   viết "1.500k" là một triệu rưỡi chứ không phải 1,5 nghìn: "1.500k" = 1.500.000, "1.200 nghìn" = 1.200.000,
+ *   "15.000k" = 15.000.000. Một hay hai chữ số ("1.5k", "2.25k") vẫn là phần thập phân ("1.5k" = 1.500).
+ *   Quy tắc này chỉ áp cho nghìn: tr, triệu, tỷ giữ nguyên cách đọc thập phân ("1.5tr" và "1.500tr" đều là 1.500.000).
  * - Không đơn vị: . hoặc , chỉ là dấu phân cách hàng nghìn, và phải nhóm đúng 3 chữ số ("1.200.000", "120,000").
- *   Còn lại ("1.5", "12.34") là số lẻ nên báo lỗi fraction.
+ *   Còn lại ("1.5", "12.34") là số lẻ nên báo lỗi fraction. Dấu lặp lại mà không nhóm đúng kiểu ("1.2.3") là sai dạng.
  */
 import { BS_LIMITS } from '@/modules/bill-split/api/contract'
 import type { MoneyParseError, MoneyParseResult } from '@/modules/bill-split/domain/types'
@@ -40,6 +44,12 @@ const UNIT_EXPONENTS: ReadonlyMap<string, number> = new Map(
   }).map(([unit, exponent]) => [unit.normalize('NFC'), exponent]),
 )
 
+/** Số mũ của nhóm đơn vị nghìn (k, nghìn, ngàn), nơi dấu chấm theo sau 3 chữ số là dấu hàng nghìn. */
+const THOUSAND_EXPONENT = 3
+
+/** Phần nguyên đứng trước dấu hàng nghìn: 1 tới 3 chữ số, không bắt đầu bằng 0. */
+const THOUSANDS_HEAD = /^[1-9]\d{0,2}$/
+
 const CURRENCY_SUFFIX = /\s*(?:₫|đ|vnd|vnđ)$/u
 
 function fail(error: MoneyParseError): MoneyParseResult {
@@ -57,8 +67,19 @@ interface UnitTerm {
   /** Phần thập phân của đơn vị, chưa bỏ số 0 cuối. */
   fraction: string
   exponent: number
-  /** Đã có dấu thập phân ghi rõ trong số, ví dụ "1.5tr". */
+  /** Đã có dấu thập phân hoặc dấu hàng nghìn ghi rõ trong số ("1.5tr", "1.500k"), nên không nhận thêm chữ số lẻ phía sau. */
   hasSeparator: boolean
+}
+
+/**
+ * Dựng một cụm "số + đơn vị". Cụm đầu tiên có đơn vị nghìn mà phần sau dấu có đúng 3 chữ số và phần trước dấu là
+ * 1 tới 3 chữ số ("1.500k", "15.000 nghìn") được đọc là số nguyên có dấu hàng nghìn: ghép hai phần lại.
+ */
+function toUnitTerm(integer: string, fraction: string | undefined, exponent: number, isFirst: boolean): UnitTerm {
+  if (isFirst && exponent === THOUSAND_EXPONENT && fraction?.length === 3 && THOUSANDS_HEAD.test(integer)) {
+    return { integer: integer + fraction, fraction: '', exponent, hasSeparator: true }
+  }
+  return { integer, fraction: fraction ?? '', exponent, hasSeparator: fraction !== undefined }
 }
 
 /** Giá trị của một cụm "số + đơn vị" tính bằng đồng, hoặc null nếu có phần lẻ dưới 1 đồng. */
@@ -78,12 +99,7 @@ function parseWithUnits(text: string): MoneyParseResult {
     if (!match) break
     const exponent = UNIT_EXPONENTS.get(match[3] ?? '')
     if (exponent === undefined) return fail('invalid')
-    terms.push({
-      integer: match[1] ?? '',
-      fraction: match[2] ?? '',
-      exponent,
-      hasSeparator: match[2] !== undefined,
-    })
+    terms.push(toUnitTerm(match[1] ?? '', match[2], exponent, terms.length === 0))
     position = termPattern.lastIndex
   }
 
@@ -118,16 +134,24 @@ function isThousandsGrouped(parts: readonly string[]): boolean {
   return /^[1-9]\d{0,2}$/.test(first) && rest.every((part) => /^\d{3}$/.test(part))
 }
 
+/**
+ * Số chỉ có một loại dấu. Mọi nhóm sau nhóm đầu đúng 3 chữ số thì là dấu hàng nghìn. Không thì là số lẻ ("1.5", "12.34"),
+ * trừ khi dấu xuất hiện từ hai lần: thập phân chỉ có một dấu, nên chỉ nhóm cuối được là phần lẻ ("1.200.00"),
+ * còn các nhóm giữa lệch kiểu hàng nghìn ("1.2.3") là sai dạng.
+ */
+function singleSeparatorDigits(parts: readonly string[]): string | MoneyParseError {
+  if (isThousandsGrouped(parts)) return parts.join('')
+  if (parts.length === 2) return 'fraction'
+  return isThousandsGrouped(parts.slice(0, -1)) ? 'fraction' : 'invalid'
+}
+
 /** Chữ số thuần của số không đơn vị, hoặc mã lỗi nếu có dấu . , không phải dấu hàng nghìn. */
 function unitlessDigits(text: string): string | MoneyParseError {
   if (!/[.,]/.test(text)) return text
   if (/[.,]{2}/.test(text)) return 'invalid'
 
   const separators = new Set(text.match(/[.,]/g))
-  if (separators.size === 1) {
-    const parts = text.split(separators.has('.') ? '.' : ',')
-    return isThousandsGrouped(parts) ? parts.join('') : 'fraction'
-  }
+  if (separators.size === 1) return singleSeparatorDigits(text.split(separators.has('.') ? '.' : ','))
 
   // Lẫn cả . và , như "1.200,5" hay "1,200.50": dấu cuối là dấu thập phân, dấu còn lại phải là dấu hàng nghìn.
   const lastIndex = Math.max(text.lastIndexOf('.'), text.lastIndexOf(','))

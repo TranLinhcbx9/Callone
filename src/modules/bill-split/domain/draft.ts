@@ -6,7 +6,7 @@ import { isIsoDate } from '@/shared/lib/date'
 import { amountToInputText } from '@/modules/bill-split/domain/money'
 import { computeSplitPreview } from '@/modules/bill-split/domain/split'
 import type { ExpenseInput, SettlementInput } from '@/modules/bill-split/domain/inputs'
-import type { Expense, ExpenseDraft, Member, Settlement, SplitPreview } from '@/modules/bill-split/domain/types'
+import type { Expense, ExpenseDraft, Member, Settlement, Share, SplitPreview } from '@/modules/bill-split/domain/types'
 
 /** Ngày khoản chi và ngày trả nợ phải từ 2000-01-01 tới 2100-12-31, giống ràng buộc ở database. */
 export function isValidBillDate(iso: string): boolean {
@@ -123,4 +123,63 @@ export function draftToInput(draft: ExpenseDraft, members: readonly Member[]): D
       expectedVersion: draft.version,
     },
   }
+}
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false
+  const ids = new Set(a)
+  return ids.size === new Set(b).size && b.every((id) => ids.has(id))
+}
+
+/** Các ô số riêng đã gõ gì đó: ô để trống hoặc chỉ khoảng trắng coi như không có (parseShareAmount cũng hiểu là 0). */
+function filledAmountTexts(texts: Readonly<Record<string, string>>): [string, string][] {
+  return Object.entries(texts)
+    .filter(([, text]) => text.trim() !== '')
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+}
+
+/**
+ * Hai bản nháp có cùng nội dung không, để biết người dùng đã sửa form chưa (hỏi xác nhận trước khi thoát).
+ * Chỉ so phần của cách chia đang dùng: người tham gia khi chia đều, ô số riêng khi chia riêng. Thứ tự người tham gia
+ * và ô số riêng bỏ trống không tính là khác biệt.
+ */
+export function draftsEqual(a: ExpenseDraft, b: ExpenseDraft): boolean {
+  if (
+    a.id !== b.id ||
+    a.version !== b.version ||
+    a.title !== b.title ||
+    a.amountText !== b.amountText ||
+    a.paidBy !== b.paidBy ||
+    a.spentOn !== b.spentOn ||
+    a.splitMode !== b.splitMode ||
+    a.note !== b.note
+  ) {
+    return false
+  }
+  if (a.splitMode === 'equal') return sameIds(a.participantIds, b.participantIds)
+  return JSON.stringify(filledAmountTexts(a.exactAmountTexts)) === JSON.stringify(filledAmountTexts(b.exactAmountTexts))
+}
+
+function sharesByMember(shares: readonly Share[]): [string, number][] {
+  return shares
+    .filter((share) => share.amount > 0)
+    .map((share): [string, number] => [share.memberId, share.amount])
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+}
+
+/**
+ * Khoản chi trên server đã có đúng nội dung của dữ liệu định gửi lên chưa (tiêu đề, số tiền, người trả, ngày, cách chia,
+ * ghi chú, phần chia; bỏ qua id, version và thời điểm). Dùng khi lưu sửa bị báo xung đột: nếu bản mới nhất trên server
+ * giống hệt thứ người dùng vừa lưu thì đó là lần lưu trước đã thành công nhưng mất phản hồi, không phải người khác sửa.
+ */
+export function expenseMatchesInput(expense: Expense, input: ExpenseInput): boolean {
+  return (
+    expense.title === input.title &&
+    expense.amount === input.amount &&
+    expense.paidBy === input.paidBy &&
+    expense.spentOn === input.spentOn &&
+    expense.splitMode === input.splitMode &&
+    (expense.note ?? null) === (input.note ?? null) &&
+    JSON.stringify(sharesByMember(expense.shares)) === JSON.stringify(sharesByMember(input.shares))
+  )
 }

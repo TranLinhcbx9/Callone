@@ -85,11 +85,19 @@ export interface GroupSummaryDto {
   updated_at: string
 }
 
+/**
+ * Kết quả bs_create_group. Khi client gửi p_token mà nhóm giữ token đó đã có, server trả đúng nhóm ấy
+ * (không tạo thêm, không tính vào giới hạn tốc độ), nên hình dạng giống hệt lần tạo đầu.
+ */
 export interface CreateGroupResultDto {
   token: string
   snapshot: GroupSnapshotDto
 }
 
+/**
+ * Kết quả bs_rotate_token: token mới. Khi client gửi p_new_token thì đây đúng là token đó, kể cả khi lần gọi là
+ * gửi lại (nhóm đã được đổi ở lần trước, server chỉ xác nhận chứ không ghi gì).
+ */
 export interface RotateTokenResultDto {
   token: string
 }
@@ -127,7 +135,11 @@ export const BS_INVALID_REASONS = [
 ] as const
 export type BsInvalidReason = (typeof BS_INVALID_REASONS)[number]
 
-/** Chi tiết của BS_INVALID. field là tên tham số bỏ tiền tố p_, ví dụ 'name', 'shares'. */
+/**
+ * Chi tiết của BS_INVALID. field là tên tham số bỏ tiền tố p_, ví dụ 'name', 'shares'.
+ * Từ v1.1 có thêm 'token' (p_token của bs_create_group) và 'new_token' (p_new_token của bs_rotate_token), với
+ * lý do 'format' (sai dạng, hoặc new_token trùng token cũ) và 'id_taken' (token đã có người giữ, kể cả nhóm đã xóa).
+ */
 export interface BsInvalidDetail {
   field: string
   reason: BsInvalidReason
@@ -147,14 +159,17 @@ export const BS_LIMITS = {
   bankAccount: 19,
   bankAccountName: 50,
   membersPerGroup: 50,
-  expensesPerGroup: 5000,
-  settlementsPerGroup: 5000,
+  expensesPerGroup: 1000,
+  settlementsPerGroup: 1000,
   minAmount: 1,
   maxAmount: 999_999_999_999,
   tokensPerLookup: 50,
-  groupCreatesPerWindow: 30,
+  /** Giới hạn tạo nhóm mỗi client trong một cửa sổ (BS_RATE_LIMITED 429). Lần gửi lại cùng p_token không tính. */
+  groupCreatesPerClient: 5,
+  /** Giới hạn tạo nhóm của cả hệ thống trong một cửa sổ. */
+  groupCreatesGlobal: 100,
   groupCreateWindowMinutes: 10,
 } as const
 
-/** Token nhóm: 24 ký tự base64url. */
+/** Token nhóm: 24 ký tự base64url (18 byte ngẫu nhiên, không có dấu = đệm). Cũng là dạng p_token và p_new_token hợp lệ. */
 export const TOKEN_PATTERN = /^[A-Za-z0-9_-]{24}$/

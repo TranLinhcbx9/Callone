@@ -30,11 +30,9 @@ create table bill_split.groups (
   constraint groups_name_length check (char_length(name) between 1 and 80),
   constraint groups_currency_vnd check (currency = 'VND'),
   constraint groups_token_hash_sha256 check (octet_length(token_hash) = 32),
+  -- unique tính cả nhóm đã xóa mềm: token của nhóm đã xóa không bao giờ được dùng lại.
   constraint groups_token_hash_key unique (token_hash)
 );
-
--- Đếm số nhóm tạo trong 10 phút gần nhất (giới hạn tốc độ của bs_create_group).
-create index groups_created_at_idx on bill_split.groups (created_at);
 
 -- ---------------------------------------------------------------------------
 -- members
@@ -151,6 +149,36 @@ create index settlements_group_id_from_member_idx on bill_split.settlements (gro
 create index settlements_group_id_to_member_idx on bill_split.settlements (group_id, to_member);
 
 -- ---------------------------------------------------------------------------
+-- settings: cấu hình nhỏ của module, hiện chỉ có hai giới hạn tạo nhóm.
+-- Giá trị mặc định nằm trong code (bill_split.take_create_slot), bảng này chỉ để ghi đè, để trống là
+-- dùng mặc định. Đổi bằng SQL (Studio hoặc psql), xem docs/supabase.md. seed.sql (chỉ local) nâng cả
+-- hai lên rất cao để chạy e2e liên tục từ một IP không bị chặn.
+-- ---------------------------------------------------------------------------
+create table bill_split.settings (
+  key    text    primary key,
+  value  integer not null,
+  constraint settings_key_known check (key in ('create_limit_client', 'create_limit_global')),
+  -- 0 là hợp lệ: chặn hẳn việc tạo nhóm mới (công tắc khẩn).
+  constraint settings_value_nonnegative check (value >= 0)
+);
+
+-- ---------------------------------------------------------------------------
+-- create_log: nhật ký cửa sổ trượt của bs_create_group, nguồn của giới hạn tốc độ tạo nhóm.
+-- Mỗi lần tạo nhóm thành công thêm một dòng, và mỗi lần tạo xóa các dòng cũ hơn cửa sổ, nên bảng
+-- chỉ giữ cửa sổ hiện tại (tối đa 100 dòng với giới hạn mặc định) và không lưu IP lâu dài. Không có khóa ngoại tới groups: log này
+-- không biết nhóm nào, chỉ biết "client này vừa tạo một nhóm lúc này".
+-- ---------------------------------------------------------------------------
+create table bill_split.create_log (
+  id           bigint      generated always as identity primary key,
+  -- sha256 (hex) của IP client, hoặc đúng chữ 'unknown' khi request không có header IP nào.
+  client_hash  text        not null,
+  created_at   timestamptz not null default now()
+);
+
+-- Dọn dòng cũ và đếm trong cửa sổ.
+create index create_log_created_at_idx on bill_split.create_log (created_at);
+
+-- ---------------------------------------------------------------------------
 -- RLS: bật và không tạo policy nào, làm lớp chặn dự phòng.
 -- Hàm security definer chạy bằng quyền chủ sở hữu (bỏ qua RLS) nên vẫn đọc ghi được.
 -- ---------------------------------------------------------------------------
@@ -159,6 +187,8 @@ alter table bill_split.members        enable row level security;
 alter table bill_split.expenses       enable row level security;
 alter table bill_split.expense_shares enable row level security;
 alter table bill_split.settlements    enable row level security;
+alter table bill_split.settings       enable row level security;
+alter table bill_split.create_log     enable row level security;
 
 -- ---------------------------------------------------------------------------
 -- Phân quyền: thu hồi mọi quyền khỏi PUBLIC, anon, authenticated.

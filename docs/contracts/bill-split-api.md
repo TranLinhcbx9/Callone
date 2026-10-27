@@ -1,4 +1,6 @@
-# Hợp đồng API: module Chia tiền (bill-split), phiên bản 1
+# Hợp đồng API: module Chia tiền (bill-split), phiên bản 1.1
+
+**Thay đổi ở 1.1 so với 1:** `bs_create_group` nhận thêm `p_token` và `bs_rotate_token` nhận thêm `p_new_token` (token do client sinh, nhờ đó gửi lại an toàn khi rớt mạng); giới hạn mỗi nhóm giảm còn 1000 khoản chi và 1000 thanh toán (trước là 5000); giới hạn tạo nhóm tính theo từng client (5 lần) cộng toàn hệ thống (100 lần) trong 10 phút, thay cho 30 lần toàn hệ thống; NBSP, ký tự rộng bằng không và mọi khoảng trắng Unicode được coi là ký tự trắng khi cắt và khi kiểm `required`.
 
 Tài liệu này là nguồn sự thật cho ba bên:
 - **Agent supabase** viết SQL đúng theo đây.
@@ -14,10 +16,11 @@ Muốn đổi hợp đồng thì báo người điều phối. Không tự đổ
 ## 1. Mô hình truy cập
 
 - Không có đăng nhập. Ai giữ token của nhóm thì đọc và ghi được nhóm đó, giống Tricount.
-- Token gồm 24 ký tự base64url, sinh từ 18 byte ngẫu nhiên:
-  `translate(encode(extensions.gen_random_bytes(18), 'base64'), '+/', '-_')`. Mẫu kiểm tra: `^[A-Za-z0-9_-]{24}$`.
-- Database chỉ lưu `token_hash = sha256(convert_to(token, 'UTF8'))`, kiểu `bytea`, unique. Không lưu token gốc ở bất kỳ đâu, kể cả log.
-- Token sai định dạng, không tồn tại, đã bị đổi, hoặc nhóm đã xóa mềm đều trả cùng một lỗi `BS_GROUP_NOT_FOUND`. Không được để lộ trường hợp nào.
+- Token gồm 24 ký tự base64url, sinh từ 18 byte ngẫu nhiên. Mẫu kiểm tra: `^[A-Za-z0-9_-]{24}$`.
+  - **Client sinh** (cách nên dùng, vì cho phép gửi lại an toàn khi rớt mạng, xem mục 10): 18 byte từ `crypto.getRandomValues`, mã hóa base64url không đệm, gửi qua `p_token` của `bs_create_group` hoặc `p_new_token` của `bs_rotate_token`. Server chỉ kiểm định dạng chứ không kiểm được độ ngẫu nhiên, nên client bắt buộc dùng bộ sinh số ngẫu nhiên an toàn.
+  - **Server sinh** khi client bỏ trống tham số đó: `translate(encode(extensions.gen_random_bytes(18), 'base64'), '+/', '-_')`.
+- Database chỉ lưu `token_hash = sha256(convert_to(token, 'UTF8'))`, kiểu `bytea`, unique **tính cả nhóm đã xóa mềm**: token của nhóm đã xóa không bao giờ được dùng lại cho nhóm khác. Không lưu token gốc ở bất kỳ đâu, kể cả log.
+- Token sai định dạng, không tồn tại, đã bị đổi, hoặc nhóm đã xóa mềm đều trả cùng một lỗi `BS_GROUP_NOT_FOUND`. Không được để lộ trường hợp nào. Ngoại lệ là hai tham số token mới do client chọn (`p_token` của `bs_create_group`, `p_new_token` của `bs_rotate_token`): sai định dạng hay đã bị chiếm thì báo `BS_INVALID` vì đó là lỗi của dữ liệu client gửi lên. Lỗi chỉ cho biết chính token vừa gửi đã có chủ, điều mà người nắm token đó vốn đã biết (đoán trúng một token 144 bit là không khả thi).
 - Client luôn gọi bằng POST, là mặc định của `supabase.rpc`. Không dùng `{ get: true }` để token không nằm trong URL.
 
 ## 2. Bố cục database
@@ -37,7 +40,14 @@ Muốn đổi hợp đồng thì báo người điều phối. Không tự đổ
 
 ## 3. Bảng trong schema `bill_split`
 
-Mọi chuỗi được `btrim` trước khi kiểm tra và lưu. Trường tùy chọn rỗng sau khi trim thì lưu `null`.
+Mọi chuỗi được chuẩn hóa về NFC rồi cắt **ký tự trắng** ở hai đầu trước khi kiểm tra và lưu. Chuỗi rỗng sau khi cắt: trường bắt buộc báo `required`, trường tùy chọn lưu `null`.
+
+Ký tự trắng gồm (định nghĩa viết tường minh theo mã ký tự, không phụ thuộc locale của database):
+- Khoảng trắng ASCII: tab, xuống dòng, VT, FF, CR (U+0009 tới U+000D) và dấu cách (U+0020).
+- Toàn bộ Unicode White_Space: NEL (U+0085), NBSP (U+00A0), U+1680, U+2000 tới U+200A, U+2028, U+2029, U+202F, U+205F, U+3000.
+- Ký tự rộng bằng không: U+200B tới U+200D, U+2060, U+FEFF.
+
+Ví dụ một tên chỉ gồm NBSP hoặc ký tự rộng bằng không bị từ chối như tên rỗng. Chỉ cắt hai đầu, ký tự trắng ở giữa chuỗi được giữ nguyên (riêng số tài khoản ngân hàng bỏ ký tự trắng ở mọi vị trí, xem `bs_save_member`). Các ký tự vô hình khác (ví dụ U+00AD, U+200E) không thuộc nhóm này.
 
 ### `groups`
 | Cột | Kiểu | Ràng buộc |
@@ -104,7 +114,26 @@ Khóa chính `(expense_id, member_id)`.
 
 Ràng buộc `from_member <> to_member`.
 
-Tạo index cho mọi khóa ngoại, và cho `groups (created_at)` để đếm giới hạn tạo nhóm.
+### `settings` (nội bộ, ghi đè giới hạn tạo nhóm)
+| Cột | Kiểu | Ràng buộc |
+|---|---|---|
+| `key` | `text` | Khóa chính, chỉ nhận `create_limit_client` và `create_limit_global` |
+| `value` | `integer` | Không âm. 0 là hợp lệ và chặn hẳn việc tạo nhóm mới (công tắc khẩn) |
+
+Giá trị mặc định nằm trong code (5 mỗi client, 100 toàn hệ thống), bảng này chỉ để ghi đè; thiếu dòng nào thì dùng mặc định của giới hạn đó. Đổi bằng SQL, xem `docs/supabase.md`. `seed.sql` (chỉ chạy ở local) đặt cả hai là 1 000 000.
+
+### `create_log` (nội bộ, nhật ký cửa sổ trượt của giới hạn tạo nhóm)
+| Cột | Kiểu | Ràng buộc |
+|---|---|---|
+| `id` | `bigint` | Khóa chính, `generated always as identity` |
+| `client_hash` | `text` | Not null. sha256 hex của IP client, hoặc đúng chữ `unknown` |
+| `created_at` | `timestamptz` | Mặc định `now()` |
+
+Mỗi lần `bs_create_group` tạo nhóm thành công thêm một dòng; mỗi lần tạo cũng xóa các dòng cũ hơn 10 phút. Bảng chỉ giữ cửa sổ hiện tại nên không lưu IP lâu dài, và `client_hash` là băm một chiều chứ không phải IP gốc.
+
+Cả hai bảng bật RLS không policy và thu hồi mọi quyền như các bảng khác của `bill_split`.
+
+Tạo index cho mọi khóa ngoại, và cho `create_log (created_at)` để dọn và đếm cửa sổ giới hạn tạo nhóm.
 
 ## 4. Quy tắc chung của hàm ghi
 
@@ -114,6 +143,7 @@ Tạo index cho mọi khóa ngoại, và cho `groups (created_at)` để đếm 
 4. Cập nhật `groups.updated_at = now()`.
 5. Trả về snapshot mới nhất theo mục 5, trừ `bs_delete_group` và `bs_rotate_token`.
 6. Kiểm tra tổng phần chia ngay trong hàm, sau khi ghi phần chia. Không dùng deferred constraint trigger: trên Postgres dưới 18, trigger hoãn chạy lúc commit dưới quyền `anon` và sẽ lỗi quyền.
+7. Hai hàm không theo đúng bước 1: `bs_create_group` không có token nhóm (thứ tự kiểm riêng ở mục 7), và `bs_rotate_token` kiểm định dạng `p_new_token` trước rồi tra nhóm mà không raise khi không thấy, để nhận ra lần gửi lại. Mọi hàm ghi khác theo đúng bước 1.
 
 ## 5. Snapshot JSON
 
@@ -162,10 +192,10 @@ PostgREST đổi SQLSTATE `PTxyz` thành HTTP status `xyz`, body là `{ "code": 
 | `BS_CONFLICT` | 409 | `p_expected_version` khác version hiện tại | `{"entity":"expense","current_version":3}` |
 | `BS_MEMBER_IN_USE` | 409 | Xóa thành viên còn trong khoản chi, phần chia hoặc thanh toán | Rỗng |
 | `BS_INVALID` | 422 | Dữ liệu sai | `{"field":"...","reason":"..."}` |
-| `BS_LIMIT` | 422 | Vượt giới hạn của nhóm | `{"limit":"members"}`, `"expenses"` hoặc `"settlements"` |
-| `BS_RATE_LIMITED` | 429 | Toàn hệ thống đã tạo từ 30 nhóm trong 10 phút gần nhất | Rỗng |
+| `BS_LIMIT` | 422 | Vượt giới hạn của nhóm: 50 thành viên, 1000 khoản chi, 1000 thanh toán | `{"limit":"members"}`, `"expenses"` hoặc `"settlements"` |
+| `BS_RATE_LIMITED` | 429 | `bs_create_group`: client này đã tạo từ 5 nhóm, hoặc toàn hệ thống đã tạo từ 100 nhóm, trong 10 phút gần nhất (giới hạn ghi đè được, xem `bs_create_group`) | Rỗng |
 
-`field` là tên tham số bỏ tiền tố `p_`, ví dụ `name`, `member_names`, `title`, `amount`, `paid_by`, `spent_on`, `split_mode`, `shares`, `note`, `bank_bin`, `bank_account`, `bank_account_name`, `from_member`, `to_member`, `settled_on`, `tokens`, `member_id`, `expense_id`, `settlement_id`.
+`field` là tên tham số bỏ tiền tố `p_`, ví dụ `name`, `member_names`, `title`, `amount`, `paid_by`, `spent_on`, `split_mode`, `shares`, `note`, `bank_bin`, `bank_account`, `bank_account_name`, `from_member`, `to_member`, `settled_on`, `tokens`, `token` (của `bs_create_group`), `new_token` (của `bs_rotate_token`), `member_id`, `expense_id`, `settlement_id`.
 
 `reason` là một trong: `required`, `too_long`, `format`, `out_of_range`, `duplicate`, `not_in_group`, `same_member`, `sum_mismatch`, `unequal_split`, `empty`, `id_taken`, `too_many`.
 
@@ -173,13 +203,24 @@ PostgREST đổi SQLSTATE `PTxyz` thành HTTP status `xyz`, body là `{ "code": 
 
 Thứ tự tham số: tham số bắt buộc trước, tham số có `default null` sau. Client bỏ qua tham số tùy chọn khi rỗng để SQL nhận `null`.
 
-### `bs_create_group(p_name text, p_member_names text[]) returns jsonb`
-- Không cần token. Kiểm giới hạn tốc độ trước: đếm `groups` có `created_at > now() - interval '10 minutes'`, kể cả nhóm đã xóa. Từ 30 trở lên thì `BS_RATE_LIMITED`.
-- `name`: bắt buộc, tối đa 80 ký tự.
-- `member_names`: rỗng thì `empty`, hơn 50 thì `BS_LIMIT members`. Mỗi tên sau trim dài 1 tới 40 (`required`, `too_long`). Không trùng nhau, không phân biệt hoa thường (`duplicate`). `field` luôn là `member_names`.
-- Sinh token, id nhóm, id từng thành viên. `position` theo thứ tự trong mảng, bắt đầu từ 0.
-- Trả `{ "token": "<token>", "snapshot": <snapshot> }`.
-- Hàm này không lặp lại an toàn, client không tự gửi lại khi lỗi mạng.
+### `bs_create_group(p_name text, p_member_names text[], p_token text default null) returns jsonb`
+Không cần token nhóm. Kiểm theo thứ tự này và dừng ở lỗi đầu tiên:
+1. **Định dạng `p_token`** (chỉ khi truyền): sai mẫu `^[A-Za-z0-9_-]{24}$` thì `BS_INVALID`, `field: token`, `reason: format`.
+2. **Gửi lại** (chỉ khi truyền `p_token`):
+   - Đã có nhóm chưa xóa giữ đúng token này: trả `{ "token", "snapshot" }` của nhóm đó (snapshot hiện tại, không phải lúc tạo), không tạo gì, không tính vào giới hạn tốc độ. Bước này đứng trước mọi kiểm tra bên dưới nên `p_name` và `p_member_names` không được xét: lần gửi lại mang nội dung khác vẫn nhận nhóm cũ nguyên vẹn.
+   - Chỉ có nhóm đã xóa mềm giữ token này: `BS_INVALID`, `field: token`, `reason: id_taken`.
+3. **Giới hạn tốc độ**: `BS_RATE_LIMITED`, xem bên dưới.
+4. **Dữ liệu.** `name`: bắt buộc, tối đa 80 ký tự. `member_names`: rỗng thì `empty`, hơn 50 thì `BS_LIMIT members`. Mỗi tên sau khi cắt dài 1 tới 40 (`required`, `too_long`), không trùng nhau và không phân biệt hoa thường (`duplicate`). `field` của lỗi tên thành viên luôn là `member_names`.
+5. **Ghi.** Token là `p_token` nếu có, không thì server sinh. Sinh id nhóm và id từng thành viên, `position` theo thứ tự trong mảng, bắt đầu từ 0. Trả `{ "token": "<token>", "snapshot": <snapshot> }`.
+
+Hàm an toàn để gửi lại khi truyền `p_token`: gửi lại cùng token nhận lại đúng nhóm đó, kể cả khi lần đầu còn đang chạy (các lần tạo chạy lần lượt dưới một khóa, lần gửi lại chạy sau thấy nhóm vừa commit). Không truyền `p_token` thì mỗi lần gọi tạo một nhóm mới và client không được tự gửi lại.
+
+**Giới hạn tốc độ** (cửa sổ trượt 10 phút, đếm trong `create_log`):
+- Mỗi client tối đa **5** lần tạo và toàn hệ thống tối đa **100** lần. Lần thứ 6 của một client, hoặc lần thứ 101 của cả hệ thống, trả `BS_RATE_LIMITED` (HTTP 429, `details` rỗng).
+- Chỉ lần tạo **thành công** mới chiếm chỗ: lần gửi lại (bước 2) và lần bị từ chối vì dữ liệu sai (bước 4) thì không.
+- Khóa client là sha256 hex của IP, lấy từ GUC `request.headers` mà PostgREST đặt cho mỗi request: ưu tiên `cf-connecting-ip`, rồi địa chỉ đầu tiên của `x-forwarded-for`, rồi `x-real-ip` (header rỗng thì bỏ qua, tên header không phân biệt hoa thường). Không dùng được header nào thì mọi request như vậy chung một bucket tên `unknown`.
+- Giới hạn của từng client chỉ đáng tin tới mức header IP đáng tin. Supabase cloud đi qua Cloudflare, nơi `cf-connecting-ip` luôn là IP thật; `x-forwarded-for` và `x-real-ip` có thể do client tự đặt khi không có header Cloudflare. Giới hạn toàn hệ thống vẫn chặn kẻ đổi header liên tục. Địa chỉ IPv6 được tính theo cả địa chỉ chứ không gộp theo dải.
+- Ghi đè hai mức bằng `bill_split.settings` (`create_limit_client`, `create_limit_global`; 0 chặn hẳn việc tạo nhóm). Local thì `seed.sql` nâng cả hai lên 1 000 000 để chạy e2e từ một IP không bị chặn.
 
 ### `bs_get_group(p_token text) returns jsonb`, stable
 Trả snapshot.
@@ -192,8 +233,14 @@ Trả snapshot.
 ### `bs_update_group(p_token text, p_name text) returns jsonb`
 Đổi tên nhóm, kiểm `name` như khi tạo. Trả snapshot.
 
-### `bs_rotate_token(p_token text) returns jsonb`
-Sinh token mới, token cũ hết hiệu lực ngay. Trả `{ "token": "<token mới>" }`.
+### `bs_rotate_token(p_token text, p_new_token text default null) returns jsonb`
+Đổi token của nhóm, token cũ hết hiệu lực ngay. Trả `{ "token": "<token mới>" }`.
+1. **Định dạng `p_new_token`** (chỉ khi truyền, kiểm đầu tiên, trước khi tra nhóm): phải khớp `^[A-Za-z0-9_-]{24}$` và khác `p_token`, nếu không thì `BS_INVALID`, `field: new_token`, `reason: format`. Không truyền thì server sinh token mới.
+2. Tra và khóa nhóm chưa xóa theo `p_token`, không raise khi không thấy.
+3. **Thấy nhóm:** nếu đã có một nhóm bất kỳ, kể cả nhóm đã xóa mềm, giữ token mới thì `BS_INVALID`, `field: new_token`, `reason: id_taken`. Không thì lưu hash của token mới, đặt `updated_at`, trả `{ "token": "<token mới>" }`.
+4. **Không thấy nhóm:** nếu có truyền `p_new_token` và đã có nhóm chưa xóa giữ đúng token đó thì đây là lần gửi lại của một lần đổi đã commit mà phản hồi bị mất. Trả `{ "token": "<p_new_token>" }`, không ghi gì. Còn lại là `BS_GROUP_NOT_FOUND`.
+
+An toàn để gửi lại với đúng cặp `(p_token, p_new_token)`. Lần gửi lại chỉ được nhận ra khi token mới còn sống: nếu nhóm đã đổi token lần nữa hoặc bị xóa trong lúc chờ thì lần gửi lại nhận `BS_GROUP_NOT_FOUND`. Bước 4 không kiểm `p_token` có đúng là token cũ của chính nhóm đó không, vì ai nắm token đang sống thì vốn đã có toàn quyền với nhóm. Hai lần đổi song song cùng cặp token cũng an toàn: lần đến sau chờ khóa rồi rơi vào bước 4.
 
 ### `bs_delete_group(p_token text) returns void`
 Đặt `deleted_at = now()`. Sau đó mọi hàm với token này trả `BS_GROUP_NOT_FOUND`.
@@ -202,7 +249,7 @@ Sinh token mới, token cũ hết hiệu lực ngay. Trả `{ "token": "<token m
 - Id chưa có trong nhóm: tạo mới, `position = max(position) + 1`, hoặc 0 nếu nhóm chưa có ai. Nhóm đã đủ 50 người thì `BS_LIMIT members`. Id đã thuộc nhóm khác thì `BS_INVALID`, `field: member_id`, `reason: id_taken`.
 - Id đã có trong nhóm: ghi đè tên và toàn bộ thông tin ngân hàng. Tham số bỏ trống nghĩa là xóa thông tin đó.
 - `name`: bắt buộc, tối đa 40, không trùng thành viên khác trong nhóm, không phân biệt hoa thường (`duplicate`).
-- Ngân hàng: `bank_bin` và `bank_account` cùng có hoặc cùng trống, thiếu một bên thì `required` cho bên thiếu. `bank_bin` đúng 6 chữ số (`format`). `bank_account` bỏ hết khoảng trắng rồi khớp `^[0-9A-Za-z]{1,19}$` (`format`). `bank_account_name` tối đa 50 (`too_long`), chỉ nhận khi có ngân hàng. Client tự chuẩn hóa tên chủ tài khoản thành chữ hoa không dấu, server chỉ trim.
+- Ngân hàng: `bank_bin` và `bank_account` cùng có hoặc cùng trống, thiếu một bên thì `required` cho bên thiếu. `bank_bin` đúng 6 chữ số (`format`). `bank_account` bỏ hết ký tự trắng ở mọi vị trí (dấu cách, NBSP, ký tự rộng bằng không... hay bị dán kèm, định nghĩa ở mục 3) rồi khớp `^[0-9A-Za-z]{1,19}$` (`format`). `bank_account_name` tối đa 50 (`too_long`), chỉ nhận khi có ngân hàng. Client tự chuẩn hóa tên chủ tài khoản thành chữ hoa không dấu, server chỉ cắt ký tự trắng hai đầu.
 - Trả snapshot.
 
 ### `bs_delete_member(p_token text, p_member_id uuid) returns jsonb`
@@ -219,7 +266,7 @@ Kiểm tra:
 
 Ghi:
 - **Tạo mới**, khi `p_expected_version` là null:
-  - Id chưa tồn tại: kiểm giới hạn 5000 khoản chi (`BS_LIMIT expenses`), thêm khoản chi với `version = 1` và các phần chia.
+  - Id chưa tồn tại: kiểm giới hạn 1000 khoản chi (`BS_LIMIT expenses`), thêm khoản chi với `version = 1` và các phần chia.
   - Id đã có trong nhóm này: coi là gửi lại do rớt mạng, không ghi gì, trả snapshot.
   - Id đã có ở nhóm khác: `BS_INVALID`, `field: expense_id`, `reason: id_taken`.
 - **Sửa**, khi `p_expected_version` có giá trị:
@@ -235,7 +282,7 @@ Xóa nếu có, phần chia xóa theo. Không có thì thôi. Trả snapshot.
 
 ### `bs_save_settlement(p_token text, p_settlement_id uuid, p_from_member uuid, p_to_member uuid, p_amount bigint, p_settled_on date, p_note text default null) returns jsonb`
 - `from_member`, `to_member` thuộc nhóm (`not_in_group`) và khác nhau (`same_member`, `field: to_member`). `amount` từ 1 tới 999 999 999 999. `settled_on` như `spent_on`. `note` tối đa 200.
-- Id chưa có: kiểm giới hạn 5000 (`BS_LIMIT settlements`) rồi thêm. Id có trong nhóm: ghi đè, không có version. Id ở nhóm khác: `BS_INVALID`, `reason: id_taken`.
+- Id chưa có: kiểm giới hạn 1000 thanh toán (`BS_LIMIT settlements`) rồi thêm. Id có trong nhóm: ghi đè, không có version. Id ở nhóm khác: `BS_INVALID`, `reason: id_taken`.
 - Trả snapshot.
 
 ### `bs_delete_settlement(p_token text, p_settlement_id uuid) returns jsonb`
@@ -247,6 +294,7 @@ Xóa nếu có. Trả snapshot.
 
 - Nhóm **Đà Lạt 3N2Đ**, token `dalat-demo-token-2026-ok`. Thành viên Linh, Hưng, Mai, Tú. Linh có Vietcombank BIN 970436, TK 0123456789, tên NGUYEN VAN LINH. Hưng có MB BIN 970422, TK 0987654321. Khoảng 5 khoản chi gồm cả chia đều và chia riêng, 1 lần trả nợ.
 - Nhóm **Lẩu thứ Sáu**, token `lau-thu-sau-demo-token-1`, 3 thành viên, 2 khoản chi.
+- Hai dòng `bill_split.settings` nâng `create_limit_client` và `create_limit_global` lên 1 000 000, để e2e và test tích hợp chạy liên tục từ một IP (qua Kong mọi request local có cùng IP) mà không bị `BS_RATE_LIMITED`. Cloud không chạy seed nên dùng mặc định 5 và 100.
 
 ## 9. Kiểm thử bắt buộc phía database
 
@@ -260,7 +308,11 @@ Viết bằng pgTAP trong `supabase/tests/database/`, chạy bằng `npm run db:
 - Gửi lại `bs_save_expense` tạo mới cùng id không tạo bản ghi thứ hai.
 - Sửa bằng version cũ trả `BS_CONFLICT`.
 - Đổi token xong thì token cũ trả `BS_GROUP_NOT_FOUND`, token mới dùng được.
-- Giới hạn tạo nhóm hoạt động.
+- Giới hạn mỗi nhóm: 50 thành viên, 1000 khoản chi, 1000 thanh toán; thêm vào nhóm đầy bị `BS_LIMIT`, xóa bớt thì thêm lại được, sửa hay gửi lại phần tử có sẵn vẫn được.
+- Tạo nhóm với `p_token`: sai định dạng thì `BS_INVALID token format`; gửi lại cùng token trả đúng nhóm cũ (kể cả khi nội dung khác), không tạo nhóm thứ hai, không thêm dòng `create_log`, không bị giới hạn tốc độ chặn; token của nhóm đã xóa mềm thì `BS_INVALID token id_taken`.
+- Đổi token với `p_new_token`: sai định dạng hoặc trùng token cũ thì `BS_INVALID new_token format`; trùng token của nhóm khác (sống hay đã xóa) thì `id_taken`; gửi lại cùng cặp trả `{ token }` mà không ghi gì; không còn dùng được cả hai token thì `BS_GROUP_NOT_FOUND`.
+- Giới hạn tạo nhóm: 5 lần mỗi client và 100 lần toàn hệ thống trong 10 phút (`BS_RATE_LIMITED`, `details` rỗng); khóa client theo thứ tự `cf-connecting-ip`, `x-forwarded-for`, `x-real-ip`, không có thì bucket `unknown`; log cũ hơn cửa sổ bị dọn; lần gửi lại và lần lỗi dữ liệu không chiếm chỗ; ghi đè bằng `settings`.
+- Ký tự trắng (mục 3): tên chỉ gồm NBSP, ký tự rộng bằng không hay khoảng trắng Unicode bị từ chối `required` (hoặc lưu `null` với trường tùy chọn), ký tự trắng hai đầu bị cắt.
 - Snapshot đúng cấu trúc ở mục 5, mảng rỗng là `[]`.
 
 ## 10. Phía client
@@ -268,4 +320,7 @@ Viết bằng pgTAP trong `supabase/tests/database/`, chạy bằng `npm run db:
 - Tầng `api/` gọi `supabase.rpc(tên, tham số)`, đổi lỗi bằng `toAppError(error, status)`, có bảng dịch mã lỗi tiếng Việt ở `api/errors.ts`.
 - Đổi snapshot DTO sang model trong `domain/types.ts` ở một chỗ duy nhất.
 - Mọi hàm ghi trả snapshot, nên cập nhật cache React Query bằng snapshot đó luôn, không cần gọi lại.
-- Chỉ thử lại khi lỗi mạng, và không bao giờ tự thử lại `bs_create_group`.
+- Chỉ thử lại khi lỗi mạng (không có phản hồi HTTP, hoặc hết giờ chờ). Lỗi có mã `BS_*` là phản hồi cuối cùng của server, không thử lại.
+- `bs_create_group` và `bs_rotate_token` an toàn để thử lại **khi và chỉ khi** client giữ nguyên token giữa các lần thử: sinh `p_token` (hoặc `p_new_token`) một lần cho mỗi thao tác của người dùng, lưu lại (ví dụ trong storage) trước khi gọi, dùng lại cho mọi lần thử, và chỉ bỏ khi thao tác thành công hoặc nhận lỗi `BS_*`. Gọi mà không truyền token thì server tự sinh và lần thử lại sẽ tạo nhóm thứ hai, nên khi đó không được tự thử lại.
+- Với `bs_rotate_token`, phải lưu `p_new_token` trước khi gọi: nếu lần đổi đã commit mà phản hồi bị mất và client không còn giữ token mới (ví dụ vừa tải lại trang), thiết bị này mất đường vào nhóm. Có phản hồi thành công thì thay token đã lưu bằng token mới; mất phản hồi thì gửi lại đúng cặp cũ.
+- `BS_RATE_LIMITED` (429) là lỗi cuối cùng, không thử lại ngay: báo người dùng đợi vài phút.

@@ -4,7 +4,9 @@ import { describe, expect, it } from 'vitest'
 import {
   createExpenseDraft,
   draftFromExpense,
+  draftsEqual,
   draftToInput,
+  expenseMatchesInput,
   expenseToInput,
   isValidBillDate,
 } from '@/modules/bill-split/domain/draft'
@@ -160,5 +162,86 @@ describe('draftToInput', () => {
     const result = draftToInput(draft, members)
     expect(result.ok).toBe(false)
     expect(!result.ok && result.preview.issues).toEqual([{ kind: 'sum_mismatch', remaining: 700_000 }])
+  })
+})
+
+describe('draftsEqual', () => {
+  const base = createExpenseDraft({ id: 'e1', today: '2026-10-26', members, paidBy: 'A' })
+
+  it('hai bản nháp giống nhau, kể cả khi là bản sao', () => {
+    expect(draftsEqual(base, base)).toBe(true)
+    expect(draftsEqual(base, { ...base, participantIds: [...base.participantIds] })).toBe(true)
+  })
+
+  it('đổi bất kỳ ô nào cũng thành khác', () => {
+    const changes: Partial<ExpenseDraft>[] = [
+      { title: 'Lẩu' },
+      { amountText: '1k' },
+      { paidBy: 'B' },
+      { spentOn: '2026-10-25' },
+      { note: 'x' },
+      { version: 2 },
+      { id: 'e2' },
+      { splitMode: 'exact' },
+    ]
+    for (const change of changes) expect(draftsEqual(base, { ...base, ...change }), JSON.stringify(change)).toBe(false)
+  })
+
+  it('chia đều: thứ tự người tham gia không quan trọng, bỏ hoặc thêm người thì khác', () => {
+    expect(draftsEqual(base, { ...base, participantIds: ['C', 'A', 'B'] })).toBe(true)
+    expect(draftsEqual(base, { ...base, participantIds: ['A', 'B'] })).toBe(false)
+    expect(draftsEqual({ ...base, participantIds: ['A', 'B'] }, { ...base, participantIds: ['A', 'C'] })).toBe(false)
+  })
+
+  it('chia riêng: ô để trống coi như không có, gõ thêm số thì khác', () => {
+    const exact: ExpenseDraft = { ...base, splitMode: 'exact', exactAmountTexts: { A: '300k' } }
+    expect(draftsEqual(exact, { ...exact, exactAmountTexts: { A: '300k', B: '', C: '  ' } })).toBe(true)
+    expect(draftsEqual(exact, { ...exact, exactAmountTexts: { A: '300k', B: '100k' } })).toBe(false)
+    expect(draftsEqual(exact, { ...exact, exactAmountTexts: { A: '350k' } })).toBe(false)
+  })
+
+  it('chỉ so phần của cách chia đang dùng', () => {
+    expect(draftsEqual(base, { ...base, exactAmountTexts: { A: '100k' } })).toBe(true)
+    const exact: ExpenseDraft = { ...base, splitMode: 'exact' }
+    expect(draftsEqual(exact, { ...exact, participantIds: [] })).toBe(true)
+  })
+})
+
+describe('expenseMatchesInput', () => {
+  const saved = makeExpense(
+    'e1',
+    'A',
+    900,
+    { A: 300, B: 300, C: 300 },
+    { title: 'Cơm trưa', splitMode: 'equal', note: 'Quán Bà Tư', version: 2, spentOn: '2026-10-26' },
+  )
+  const sameInput = { ...expenseToInput(saved), expectedVersion: 1 }
+
+  it('cùng nội dung thì khớp, bất kể id, version và thứ tự phần chia', () => {
+    expect(expenseMatchesInput(saved, sameInput)).toBe(true)
+    expect(expenseMatchesInput(saved, { ...sameInput, id: 'khac', expectedVersion: null })).toBe(true)
+    expect(expenseMatchesInput(saved, { ...sameInput, shares: [...sameInput.shares].reverse() })).toBe(true)
+  })
+
+  it('ghi chú trống ở hai phía (null) là khớp', () => {
+    expect(expenseMatchesInput({ ...saved, note: null }, { ...sameInput, note: null })).toBe(true)
+    expect(expenseMatchesInput(saved, { ...sameInput, note: null })).toBe(false)
+  })
+
+  it('khác bất kỳ trường nào thì không khớp', () => {
+    const changes = [
+      { title: 'Cơm tối' },
+      { amount: 1_200 },
+      { paidBy: 'B' },
+      { spentOn: '2026-10-25' },
+      { splitMode: 'exact' as const },
+      { note: 'Quán khác' },
+      { shares: [{ memberId: 'A', amount: 500 }, { memberId: 'B', amount: 400 }] },
+    ]
+    for (const change of changes) expect(expenseMatchesInput(saved, { ...sameInput, ...change }), JSON.stringify(change)).toBe(false)
+  })
+
+  it('phần chia 0 đồng không tính (server không lưu)', () => {
+    expect(expenseMatchesInput(saved, { ...sameInput, shares: [...sameInput.shares, { memberId: 'D', amount: 0 }] })).toBe(true)
   })
 })

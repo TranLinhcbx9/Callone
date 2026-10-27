@@ -1,7 +1,7 @@
 // expect(giá trị, thông điệp) là cú pháp hợp lệ của Vitest, còn rule valid-expect của plugin chỉ biết Jest.
 /* oxlint-disable vitest/valid-expect */
 import { describe, expect, it } from 'vitest'
-import { BANKS, findBankByBin, searchBanks } from '@/modules/bill-split/domain/banks'
+import { BANKS, bankDisplayName, findBankByBin, searchBanks } from '@/modules/bill-split/domain/banks'
 import type { Bank } from '@/modules/bill-split/domain/types'
 
 const small: Bank[] = [
@@ -13,7 +13,7 @@ const small: Bank[] = [
 
 describe('BANKS', () => {
   it('có đủ trường, đã trim, BIN là 6 chữ số và không trùng', () => {
-    expect(BANKS.length).toBeGreaterThan(40)
+    expect(BANKS).toHaveLength(76)
     for (const bank of BANKS) {
       expect(bank.bin, bank.code).toMatch(/^\d{6}$/)
       for (const value of [bank.code, bank.shortName, bank.name]) {
@@ -37,6 +37,60 @@ describe('BANKS', () => {
       TPB: '970423',
       BIDV: '970418',
     })
+  })
+
+  it('giữ cả những ngân hàng mà app của họ không quét được QR (transferSupported = 0), vì cờ đó không nói về người nhận', () => {
+    const byCode = new Map(BANKS.map((bank) => [bank.code, bank]))
+    // Mười mục lấy rải trong số 28 mục có transferSupported = 0 của API.
+    for (const [code, bin] of [
+      ['HSBC', '458761'],
+      ['CITIBANK', '533948'],
+      ['UOB', '970458'],
+      ['VRB', '970421'],
+      ['GPB', '970408'],
+      ['DBS', '796500'],
+      ['SCVN', '970410'],
+      ['VTLMONEY', '971005'],
+      ['TNEX', '963326'],
+      ['MAFC', '977777'],
+    ] as const) {
+      expect(byCode.get(code)?.bin, code).toBe(bin)
+    }
+  })
+
+  it('đúng thứ tự của API: mục đầu và cuối, và các mục bị bỏ qua trước đây nằm xen giữa chứ không dồn xuống cuối', () => {
+    expect(BANKS.map((bank) => bank.code).slice(0, 3)).toEqual(['ICB', 'VCB', 'BIDV'])
+    expect(BANKS.at(-1)?.code).toBe('KBHCM')
+    const codes = BANKS.map((bank) => bank.code)
+    expect(codes.slice(19, 24)).toEqual(['Ubank', 'TIMO', 'VTLMONEY', 'VNPTMONEY', 'SGICB'])
+    expect(codes.indexOf('HSBC')).toBe(57)
+    expect(codes.indexOf('UOB')).toBe(69)
+  })
+
+  it('tên không còn khoảng trắng thừa ở hai đầu (mục MAFC trong API có dấu cách cuối)', () => {
+    expect(findBankByBin('977777')?.name).toBe('Công ty Tài chính TNHH MTV Mirae Asset (Việt Nam)')
+  })
+})
+
+describe('bankDisplayName', () => {
+  it('BIN có trong danh sách thì là tên ngắn', () => {
+    expect(bankDisplayName('970436')).toBe('Vietcombank')
+    expect(bankDisplayName('970422')).toBe('MBBank')
+    expect(bankDisplayName('458761')).toBe('HSBC')
+  })
+
+  it('BIN lạ (server nhận mọi BIN 6 chữ số) thì là "Ngân hàng <bin>"', () => {
+    expect(bankDisplayName('999999')).toBe('Ngân hàng 999999')
+    expect(bankDisplayName('000001')).toBe('Ngân hàng 000001')
+  })
+
+  it('không có BIN thì chỉ là "Ngân hàng", không bao giờ rỗng', () => {
+    for (const bin of ['', null, undefined]) expect(bankDisplayName(bin), String(bin)).toBe('Ngân hàng')
+  })
+
+  it('tra trong danh sách tùy chọn', () => {
+    expect(bankDisplayName('333333', small)).toBe('MBV')
+    expect(bankDisplayName('970436', small)).toBe('Ngân hàng 970436')
   })
 })
 

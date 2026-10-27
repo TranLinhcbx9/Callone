@@ -78,7 +78,7 @@ export function ExpenseSplitSection({ members, draft, preview, onChange, showIss
   }
 
   return (
-    <section className="flex flex-col gap-3">
+    <section id="expense-split" className="flex flex-col gap-3">
       <h3 className="text-sm font-medium">Chia như thế nào?</h3>
       <SegmentedControl
         ariaLabel="Cách chia"

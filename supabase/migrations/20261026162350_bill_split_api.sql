@@ -16,7 +16,7 @@
 -- ---------------------------------------------------------------------------
 -- bs_create_group
 -- ---------------------------------------------------------------------------
-create function public.bs_create_group(p_name text, p_member_names text[])
+create function public.bs_create_group(p_name text, p_member_names text[], p_token text default null)
 returns jsonb
 language plpgsql
 security definer
@@ -29,16 +29,35 @@ declare
   v_names    text[] := '{}';
   v_keys     text[] := '{}';
   v_token    text;
+  v_replay   jsonb;
   v_group_id uuid;
 begin
-  -- Giới hạn tốc độ toàn hệ thống: từ 30 nhóm trong 10 phút gần nhất (kể cả nhóm đã xóa) thì từ chối.
-  -- Khóa advisory giữ tới hết transaction để hai lần tạo đồng thời không cùng lọt qua mức 29.
-  perform pg_advisory_xact_lock(hashtextextended('callone.bill_split.create_group', 0));
-  if (select count(*)
-        from bill_split.groups g
-       where g.created_at > now() - interval '10 minutes') >= 30 then
-    perform bill_split.fail(429, 'BS_RATE_LIMITED');
+  -- 1. Token do client sinh (nếu có) phải đúng định dạng. Không có thì server tự sinh ở bước ghi.
+  if p_token is not null and p_token !~ '^[A-Za-z0-9_-]{24}$' then
+    perform bill_split.invalid('token', 'format');
   end if;
+
+  -- 2. Gửi lại: nhóm đã được tạo với đúng token này (lần trước rớt mạng khi nhận phản hồi) thì trả
+  -- { token, snapshot } của nhóm đó, không tạo gì và không tính vào giới hạn tốc độ. Lần dò này không
+  -- khóa gì, để việc dựng snapshot của một nhóm lớn không chặn người khác tạo nhóm.
+  v_replay := bill_split.replay_create(p_token);
+  if v_replay is not null then
+    return v_replay;
+  end if;
+
+  -- 3. Mọi lần tạo chạy lần lượt: khóa advisory giữ tới hết transaction, để đếm giới hạn rồi ghi không
+  -- bị hai lần tạo đồng thời cùng lọt qua. Cũng vì vậy phải dò gửi lại thêm lần nữa sau khi có khóa: một
+  -- lần gửi lại chạy song song với lần tạo đầu (client hết giờ chờ rồi gửi lại khi lần đầu còn đang chạy)
+  -- sẽ thấy nhóm lần đầu vừa commit và nhận lại đúng nhóm đó, thay vì lỗi trùng khóa thô.
+  perform pg_advisory_xact_lock(hashtextextended('callone.bill_split.create_group', 0));
+  v_replay := bill_split.replay_create(p_token);
+  if v_replay is not null then
+    return v_replay;
+  end if;
+
+  -- 4. Giới hạn tốc độ: theo từng client và toàn hệ thống (bill_split.take_create_slot). Kiểm trước khi
+  -- kiểm dữ liệu. Lỗi ở các bước dưới rollback cả transaction nên chỉ lần tạo thành công mới chiếm chỗ.
+  perform bill_split.take_create_slot();
 
   v_name := bill_split.req_text(p_name, 'name', 80);
 
@@ -58,11 +77,17 @@ begin
     v_keys := v_keys || lower(v_clean);
   end loop;
 
-  v_token := bill_split.new_token();
+  v_token := coalesce(p_token, bill_split.new_token());
 
-  insert into bill_split.groups (name, token_hash)
-  values (v_name, bill_split.hash_token(v_token))
-  returning id into v_group_id;
+  -- Đã dò gửi lại ở trên, nên trùng khóa ở đây chỉ còn xảy ra khi một bs_rotate_token song song vừa
+  -- đổi nhóm khác sang đúng token này. Báo id_taken thay vì để lỗi 23505 thô lọt ra client.
+  begin
+    insert into bill_split.groups (name, token_hash)
+    values (v_name, bill_split.hash_token(v_token))
+    returning id into v_group_id;
+  exception when unique_violation then
+    perform bill_split.invalid('token', 'id_taken');
+  end;
 
   insert into bill_split.members (id, group_id, name, "position")
   select gen_random_uuid(), v_group_id, n.name, (n.ord - 1)::integer
@@ -72,11 +97,11 @@ begin
 end;
 $$;
 
-comment on function public.bs_create_group(text, text[]) is
-  'Chia tiền: tạo nhóm mới. Trả { token, snapshot }. Không an toàn để gửi lại, client không tự thử lại.';
+comment on function public.bs_create_group(text, text[], text) is
+  'Chia tiền: tạo nhóm mới. Trả { token, snapshot }. p_token (tùy chọn, client sinh) làm hàm gửi lại an toàn: nhóm đã có với token đó thì trả lại đúng nhóm đó.';
 
-revoke all on function public.bs_create_group(text, text[]) from public, anon, authenticated;
-grant execute on function public.bs_create_group(text, text[]) to anon, authenticated;
+revoke all on function public.bs_create_group(text, text[], text) from public, anon, authenticated;
+grant execute on function public.bs_create_group(text, text[], text) to anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- bs_get_group (stable, chỉ đọc)
@@ -187,7 +212,7 @@ grant execute on function public.bs_update_group(text, text) to anon, authentica
 -- ---------------------------------------------------------------------------
 -- bs_rotate_token
 -- ---------------------------------------------------------------------------
-create function public.bs_rotate_token(p_token text)
+create function public.bs_rotate_token(p_token text, p_new_token text default null)
 returns jsonb
 language plpgsql
 security definer
@@ -195,25 +220,56 @@ set search_path = ''
 as $$
 declare
   v_group_id uuid;
-  v_token    text;
+  v_new      text;
+  v_hash     bytea;
 begin
-  v_group_id := bill_split.lock_group(p_token);
-  v_token := bill_split.new_token();
+  -- Token mới do client chọn (để gửi lại cùng cặp token an toàn) phải đúng định dạng và khác token cũ.
+  if p_new_token is not null and (p_new_token !~ '^[A-Za-z0-9_-]{24}$' or p_new_token = p_token) then
+    perform bill_split.invalid('new_token', 'format');
+  end if;
+  v_new := coalesce(p_new_token, bill_split.new_token());
+  v_hash := bill_split.hash_token(v_new);
 
-  update bill_split.groups
-     set token_hash = bill_split.hash_token(v_token),
-         updated_at = now()
-   where id = v_group_id;
+  -- Tìm và khóa nhóm theo token cũ, không raise khi không thấy.
+  v_group_id := bill_split.try_lock_group(p_token);
 
-  return jsonb_build_object('token', v_token);
+  if v_group_id is null then
+    -- Token cũ không còn dùng được. Nếu client gửi token mới và đã có nhóm chưa xóa giữ đúng token đó
+    -- thì đây là lần gửi lại của một lần đổi đã commit mà phản hồi bị mất (hoặc người chờ khóa thua
+    -- một lần đổi song song cùng cặp token): trả lại token mới, không ghi gì.
+    if p_new_token is not null
+       and exists (select 1 from bill_split.groups g where g.token_hash = v_hash and g.deleted_at is null) then
+      return jsonb_build_object('token', v_new);
+    end if;
+    perform bill_split.fail(404, 'BS_GROUP_NOT_FOUND');
+  end if;
+
+  -- Token mới đã thuộc về một nhóm khác (kể cả nhóm đã xóa mềm, vì token_hash unique tính cả nhóm đó).
+  -- Không thể là chính nhóm này: token mới khác token cũ và hash của nhóm này đang là hash của token cũ.
+  if exists (select 1 from bill_split.groups g where g.token_hash = v_hash) then
+    perform bill_split.invalid('new_token', 'id_taken');
+  end if;
+
+  -- Một lần đổi hoặc tạo nhóm song song vừa chiếm đúng token này giữa lúc kiểm và ghi thì báo id_taken
+  -- thay vì để lỗi 23505 thô lọt ra client.
+  begin
+    update bill_split.groups
+       set token_hash = v_hash,
+           updated_at = now()
+     where id = v_group_id;
+  exception when unique_violation then
+    perform bill_split.invalid('new_token', 'id_taken');
+  end;
+
+  return jsonb_build_object('token', v_new);
 end;
 $$;
 
-comment on function public.bs_rotate_token(text) is
-  'Chia tiền: đổi token nhóm, token cũ hết hiệu lực ngay. Trả { token }.';
+comment on function public.bs_rotate_token(text, text) is
+  'Chia tiền: đổi token nhóm, token cũ hết hiệu lực ngay. p_new_token (tùy chọn, client sinh) làm hàm gửi lại an toàn với cùng cặp token. Trả { token }.';
 
-revoke all on function public.bs_rotate_token(text) from public, anon, authenticated;
-grant execute on function public.bs_rotate_token(text) to anon, authenticated;
+revoke all on function public.bs_rotate_token(text, text) from public, anon, authenticated;
+grant execute on function public.bs_rotate_token(text, text) to anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- bs_delete_group (xóa mềm)
@@ -274,9 +330,10 @@ begin
   v_name := bill_split.req_text(p_name, 'name', 40);
 
   -- Ngân hàng: bank_bin và bank_account cùng có hoặc cùng trống. Có tên chủ tài khoản mà thiếu
-  -- ngân hàng thì cũng báo thiếu bank_bin hoặc bank_account. Số tài khoản bỏ hết khoảng trắng.
+  -- ngân hàng thì cũng báo thiếu bank_bin hoặc bank_account. Số tài khoản bỏ hết ký tự trắng
+  -- (dấu cách, NBSP, ký tự rộng bằng không... hay bị dán kèm), cùng định nghĩa "trắng" với bill_split.clean.
   v_bin := bill_split.clean(p_bank_bin);
-  v_account := nullif(regexp_replace(coalesce(p_bank_account, ''), '\s', '', 'g'), '');
+  v_account := bill_split.strip_blank(p_bank_account);
   v_holder := bill_split.opt_text(p_bank_account_name, 'bank_account_name', 50);
 
   if v_bin is not null or v_account is not null or v_holder is not null then
@@ -488,7 +545,7 @@ begin
       perform bill_split.invalid('expense_id', 'id_taken');
     end if;
 
-    if (select count(*) from bill_split.expenses e where e.group_id = v_group_id) >= 5000 then
+    if (select count(*) from bill_split.expenses e where e.group_id = v_group_id) >= 1000 then
       perform bill_split.over_limit('expenses');
     end if;
 
@@ -678,7 +735,7 @@ begin
       perform bill_split.invalid('settlement_id', 'id_taken');
     end if;
 
-    if (select count(*) from bill_split.settlements t where t.group_id = v_group_id) >= 5000 then
+    if (select count(*) from bill_split.settlements t where t.group_id = v_group_id) >= 1000 then
       perform bill_split.over_limit('settlements');
     end if;
 

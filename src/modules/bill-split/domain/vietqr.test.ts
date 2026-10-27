@@ -4,10 +4,13 @@ import { describe, expect, it } from 'vitest'
 import { BS_LIMITS } from '@/modules/bill-split/api/contract'
 import { createRng } from '@/modules/bill-split/domain/testing/prng'
 import {
+  MAX_QR_AMOUNT,
   buildTransferPayload,
   buildTransferQr,
   buildVietQrPayload,
   crc16Ccitt,
+  isValidQrAmount,
+  tryBuildTransferQr,
 } from '@/modules/bill-split/domain/vietqr'
 
 interface Field {
@@ -251,5 +254,67 @@ describe('buildTransferQr', () => {
     const { payload, message } = buildTransferQr(bank, 1000)
     expect(message).toBe('')
     expect(field(parseTlv(payload), '62')).toBeUndefined()
+  })
+})
+
+describe('MAX_QR_AMOUNT và isValidQrAmount', () => {
+  it('MAX_QR_AMOUNT là mức lớn nhất buildVietQrPayload nhận, thêm 1 đồng thì ném RangeError', () => {
+    expect(MAX_QR_AMOUNT).toBe(999_999_999_999)
+    expect(MAX_QR_AMOUNT).toBe(BS_LIMITS.maxAmount)
+    expect(() => buildVietQrPayload({ bin: '970436', accountNumber: '1', amount: MAX_QR_AMOUNT })).not.toThrow()
+    expect(() => buildVietQrPayload({ bin: '970436', accountNumber: '1', amount: MAX_QR_AMOUNT + 1 })).toThrow(RangeError)
+  })
+
+  it('chỉ nhận số nguyên từ 1 tới MAX_QR_AMOUNT', () => {
+    for (const amount of [1, 2, 1000, 123_456_789, MAX_QR_AMOUNT]) expect(isValidQrAmount(amount), String(amount)).toBe(true)
+    for (const amount of [
+      0,
+      -1,
+      0.5,
+      1.5,
+      MAX_QR_AMOUNT + 1,
+      2 ** 53,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ]) {
+      expect(isValidQrAmount(amount), String(amount)).toBe(false)
+    }
+  })
+
+  it('khớp với việc buildVietQrPayload có ném hay không trên các số tiền ngẫu nhiên', () => {
+    const rng = createRng(999)
+    for (let i = 0; i < 500; i++) {
+      const amount = rng.pick([rng.int(-5, 5), rng.int(1, MAX_QR_AMOUNT), MAX_QR_AMOUNT + rng.int(0, 3), rng.int(1, 99) / 10])
+      let threw = false
+      try {
+        buildVietQrPayload({ bin: '970436', accountNumber: '1', amount })
+      } catch {
+        threw = true
+      }
+      expect(isValidQrAmount(amount), String(amount)).toBe(!threw)
+    }
+  })
+})
+
+describe('tryBuildTransferQr', () => {
+  const bank = { bin: '970423', accountNumber: '0123456789', accountName: null }
+
+  it('đầu vào hợp lệ thì trả đúng như buildTransferQr', () => {
+    expect(tryBuildTransferQr(bank, 150_000, 'Chia tiền Đà Lạt')).toEqual(buildTransferQr(bank, 150_000, 'Chia tiền Đà Lạt'))
+    expect(tryBuildTransferQr(bank, MAX_QR_AMOUNT)).toEqual(buildTransferQr(bank, MAX_QR_AMOUNT))
+  })
+
+  it('số tiền vượt mức hoặc không hợp lệ thì trả null thay vì ném', () => {
+    for (const amount of [0, -5, 1.5, MAX_QR_AMOUNT + 1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => buildTransferQr(bank, amount), String(amount)).toThrow(RangeError)
+      expect(tryBuildTransferQr(bank, amount), String(amount)).toBeNull()
+    }
+  })
+
+  it('tài khoản hoặc BIN sai dạng thì trả null', () => {
+    expect(tryBuildTransferQr({ ...bank, bin: '97042' }, 1000)).toBeNull()
+    expect(tryBuildTransferQr({ ...bank, accountNumber: '0123 456' }, 1000)).toBeNull()
+    expect(tryBuildTransferQr({ ...bank, accountNumber: '' }, 1000)).toBeNull()
   })
 })

@@ -4,7 +4,7 @@
 begin;
 set local search_path = public, extensions;
 
-select plan(23);
+select plan(24);
 
 create function pg_temp.names(p_snap jsonb) returns jsonb
 language sql
@@ -163,10 +163,18 @@ select is(
   0::bigint,
   'seed: mọi tên đã ở dạng NFC giống như dữ liệu đi qua API'
 );
-select is(
-  (select count(*) from bill_split.groups g where g.id in ('a1000000-0000-4000-8000-000000000001', 'b1000000-0000-4000-8000-000000000001') and g.created_at > now() - interval '10 minutes'),
-  0::bigint,
-  'seed: nhóm mẫu không bị tính vào giới hạn tốc độ tạo nhóm'
+-- Qua Kong mọi request local đến từ một IP, nên seed phải nâng giới hạn tạo nhóm để e2e chạy được.
+select cmp_ok(
+  (select s.value from bill_split.settings s where s.key = 'create_limit_client'),
+  '>=',
+  100000,
+  'seed: giới hạn tạo nhóm theo client được nâng rất cao ở local'
+);
+select cmp_ok(
+  (select s.value from bill_split.settings s where s.key = 'create_limit_global'),
+  '>=',
+  100000,
+  'seed: giới hạn tạo nhóm toàn hệ thống được nâng rất cao ở local'
 );
 
 select * from finish();

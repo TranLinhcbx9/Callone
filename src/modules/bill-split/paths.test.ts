@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { BILL_SPLIT_BASE_PATH, billSplitPaths, groupLink, parseGroupLink } from '@/modules/bill-split/paths'
+import {
+  BILL_SPLIT_BASE_PATH,
+  GROUP_TAB_PARAMS,
+  billSplitPaths,
+  groupLink,
+  groupTabPath,
+  parseGroupLink,
+  parseGroupTab,
+} from '@/modules/bill-split/paths'
 
 const TOKEN = 'dalat-demo-token-2026-ok'
 const OTHER = 'Ab_-Cd0123456789EfGhIjKl'
@@ -79,5 +87,23 @@ describe('parseGroupLink', () => {
     expect(parseGroupLink(billSplitPaths.newExpense(OTHER))).toBe(OTHER)
     expect(parseGroupLink(billSplitPaths.expense(OTHER, 'e1'))).toBe(OTHER)
     expect(parseGroupLink(groupLink('https://callone.app', OTHER))).toBe(OTHER)
+  })
+})
+
+describe('tab của trang nhóm', () => {
+  it('parseGroupTab đọc đúng ba giá trị, thiếu hoặc lạ thì về Chi tiêu', () => {
+    expect(parseGroupTab('chi-tieu')).toBe('expenses')
+    expect(parseGroupTab('so-du')).toBe('balances')
+    expect(parseGroupTab('thanh-vien')).toBe('members')
+    for (const value of [null, undefined, '', 'expenses', 'Số dư', 'SO-DU']) expect(parseGroupTab(value)).toBe('expenses')
+  })
+
+  it('groupTabPath bỏ ?tab= với tab mặc định, các tab khác ghi đúng giá trị mà parseGroupTab đọc lại được', () => {
+    expect(groupTabPath(TOKEN, 'expenses')).toBe(billSplitPaths.group(TOKEN))
+    expect(groupTabPath(TOKEN, 'members')).toBe(`/bill-split/g/${TOKEN}?tab=thanh-vien`)
+    for (const tab of Object.keys(GROUP_TAB_PARAMS) as (keyof typeof GROUP_TAB_PARAMS)[]) {
+      const query = groupTabPath(TOKEN, tab).split('?tab=')[1] ?? null
+      expect(parseGroupTab(query)).toBe(tab)
+    }
   })
 })

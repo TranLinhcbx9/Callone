@@ -527,7 +527,7 @@ Bản cài đặt tham khảo chạy được nằm ở `src/app/dev/mockups/` (
 
 ## 12. Ghi chú và câu hỏi mở
 
-Cần m quyết:
+Đã chốt ngày 27/10/2026: giữ nguyên tất cả như thiết kế (Plus Jakarta Sans, màu chàm, tab trên cùng và nút nổi, giữ thanh bên desktop; mục 4 đến 6 giữ như hiện tại). Danh sách câu hỏi để lại làm ngữ cảnh:
 
 1. **Font:** Plus Jakarta Sans (đề xuất), Be Vietnam Pro hay Inter. Đổi bằng một dòng.
 2. **Màu nhấn chàm** (`oklch(0.47 0.12 268)`, xanh chàm hơi tím) có hợp không, hay muốn xanh lục bảo, nâu đất…

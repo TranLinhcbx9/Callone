@@ -1,6 +1,7 @@
 import type { FormEvent } from 'react'
 import { Trash2Icon } from 'lucide-react'
 import { BankPicker } from '@/modules/bill-split/components/BankPicker'
+import { normalizeAccountName, normalizeAccountNumber } from '@/modules/bill-split/domain/text'
 import type { Bank } from '@/modules/bill-split/domain/types'
 import { Field } from '@/shared/ui/Field'
 import { Spinner } from '@/shared/ui/Spinner'
@@ -32,6 +33,8 @@ export interface MemberFormProps {
 /**
  * Form thành viên: tên, và tuỳ chọn ngân hàng, số tài khoản, tên chủ tài khoản để tạo mã VietQR.
  * Thường đặt trong ResponsiveDialog. Ngân hàng và số tài khoản đi cùng nhau, nơi gọi kiểm "có cả hai hoặc không có gì".
+ * Rời ô số tài khoản thì bỏ khoảng trắng, rời ô tên chủ tài khoản thì đổi thành chữ hoa không dấu, để ô hiện đúng
+ * thứ sẽ được lưu (người dùng gõ "Nguyễn Văn Linh" thì thấy "NGUYEN VAN LINH").
  */
 export function MemberForm({
   values,
@@ -81,6 +84,10 @@ export function MemberForm({
             id="member-account"
             value={values.accountNumber}
             onChange={(event) => onChange({ accountNumber: event.target.value })}
+            onBlur={() => {
+              const clean = normalizeAccountNumber(values.accountNumber)
+              if (clean !== values.accountNumber) onChange({ accountNumber: clean })
+            }}
             inputMode="numeric"
             maxLength={24}
             placeholder="Ví dụ: 0123456789"
@@ -100,6 +107,10 @@ export function MemberForm({
             id="member-holder"
             value={values.accountName}
             onChange={(event) => onChange({ accountName: event.target.value })}
+            onBlur={() => {
+              const clean = normalizeAccountName(values.accountName)
+              if (clean !== values.accountName) onChange({ accountName: clean })
+            }}
             maxLength={50}
             autoCapitalize="characters"
             autoComplete="off"
@@ -120,7 +131,14 @@ export function MemberForm({
         </Button>
       </div>
       {onDelete && (
-        <Button type="button" variant="ghost" className="-mt-1 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={onDelete} disabled={isSaving}>
+        <Button
+          id="member-delete"
+          type="button"
+          variant="ghost"
+          className="-mt-1 text-destructive hover:bg-destructive/10 hover:text-destructive"
+          onClick={onDelete}
+          disabled={isSaving}
+        >
           <Trash2Icon />
           Xóa thành viên
         </Button>

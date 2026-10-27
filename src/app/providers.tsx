@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
-import { Toaster } from 'sonner'
 import { isRetryableError } from '@/shared/lib/errors'
+import { Toaster } from '@/shared/ui/sonner'
 
 function createQueryClient(): QueryClient {
   return new QueryClient({
@@ -22,7 +22,16 @@ export function Providers({ children }: { children: ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       {children}
-      <Toaster position="top-center" closeButton />
+      {/*
+        Toast nằm dưới: ở trên nó che header và thanh tab của trang (toast "Cập nhật" của PWA còn không tự tắt), và nút
+        "Hoàn tác" ở đầu màn hình khó với tới bằng ngón cái. Chừa chỗ cho thanh Lưu (72px) và nút nổi (64px) ở chân trang.
+      */}
+      <Toaster
+        position="bottom-center"
+        closeButton
+        offset={{ bottom: 'calc(5.5rem + env(safe-area-inset-bottom, 0px))' }}
+        mobileOffset={{ bottom: 'calc(5.5rem + env(safe-area-inset-bottom, 0px))' }}
+      />
     </QueryClientProvider>
   )
 }

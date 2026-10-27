@@ -1,5 +1,7 @@
+import { useId } from 'react'
 import { CheckIcon, QrCodeIcon } from 'lucide-react'
 import type { Member, Transfer } from '@/modules/bill-split/domain/types'
+import { MAX_QR_AMOUNT } from '@/modules/bill-split/domain/vietqr'
 import { cn } from '@/shared/lib/utils'
 import { MemberAvatar } from '@/shared/ui/MemberAvatar'
 import { MoneyText } from '@/shared/ui/MoneyText'
@@ -17,18 +19,24 @@ export interface TransferListProps {
   onMarkPaid?: (transfer: Transfer) => void
   /** Mở form thành viên để người nhận nhập tài khoản. */
   onEditMember?: (member: Member) => void
-  /** Giao dịch đang được lưu, dạng `${fromMemberId}:${toMemberId}`. */
+  /**
+   * Giao dịch đang được lưu, dạng `${fromMemberId}:${toMemberId}`. Giao dịch này hiện vòng xoay, còn khi có
+   * một giao dịch đang lưu thì nút của mọi giao dịch khác cũng khóa, để hai lần ghi không chạy chồng nhau.
+   */
   busyKey?: string | null
 }
 
 /** Gợi ý chuyển khoản: mỗi giao dịch là một thẻ có hai nút "Mã QR" và "Đã trả". Giao dịch của mình được tô nhẹ. */
 export function TransferList({ transfers, members, meId, onShowQr, onMarkPaid, onEditMember, busyKey }: TransferListProps) {
   const byId = new Map(members.map((member) => [member.id, member]))
+  const baseId = useId()
+  const locked = busyKey !== null && busyKey !== undefined
 
   return (
     <ul className="flex flex-col gap-2.5">
       {transfers.map((transfer) => {
         const key = `${transfer.fromMemberId}:${transfer.toMemberId}`
+        const titleId = `${baseId}${key}`
         const from = byId.get(transfer.fromMemberId)
         const to = byId.get(transfer.toMemberId)
         const iPay = transfer.fromMemberId === meId
@@ -36,6 +44,8 @@ export function TransferList({ transfers, members, meId, onShowQr, onMarkPaid, o
         const fromLabel = iPay ? 'Bạn' : (from?.name ?? '?')
         const toLabel = iReceive ? 'bạn' : (to?.name ?? '?')
         const hasBank = Boolean(to?.bank)
+        // Mã VietQR không mang được số tiền lớn hơn mức tối đa của một khoản; khi đó chỉ còn cách chuyển trực tiếp.
+        const qrTooLarge = transfer.amount > MAX_QR_AMOUNT
         const busy = busyKey === key
         return (
           <li
@@ -50,25 +60,32 @@ export function TransferList({ transfers, members, meId, onShowQr, onMarkPaid, o
                 <MemberAvatar name={from?.name ?? '?'} colorKey={transfer.fromMemberId} ring />
                 <MemberAvatar name={to?.name ?? '?'} colorKey={transfer.toMemberId} ring />
               </span>
-              <p className="min-w-0 flex-1 truncate text-body leading-snug font-medium">
+              <p id={titleId} className="min-w-0 flex-1 text-body leading-snug font-medium break-words line-clamp-2">
                 {fromLabel} chuyển cho {toLabel}
               </p>
               <MoneyText amount={transfer.amount} weight="semibold" />
             </div>
             <div className="mt-3.5 grid grid-cols-2 gap-2">
+              {/* aria-describedby cho trình đọc màn hình biết nút thuộc lần chuyển nào; tên nút vẫn giữ nguyên. */}
               <Button
-                variant={iPay && hasBank ? 'default' : 'outline'}
-                disabled={!hasBank || busy}
+                variant={iPay && hasBank && !qrTooLarge ? 'default' : 'outline'}
+                disabled={!hasBank || qrTooLarge || locked}
+                aria-describedby={titleId}
                 onClick={() => onShowQr?.(transfer)}
               >
                 <QrCodeIcon />
                 Mã QR
               </Button>
-              <Button variant="outline" disabled={busy} onClick={() => onMarkPaid?.(transfer)}>
+              <Button variant="outline" disabled={locked} aria-describedby={titleId} onClick={() => onMarkPaid?.(transfer)}>
                 {busy ? <Spinner /> : <CheckIcon />}
                 Đã trả
               </Button>
             </div>
+            {hasBank && qrTooLarge && to && (
+              <p className="mt-2.5 text-small text-muted-foreground">
+                Số tiền quá lớn để tạo mã QR. Hãy chuyển khoản trực tiếp cho {to.name}.
+              </p>
+            )}
             {!hasBank && to && (
               <p className="mt-2.5 text-small text-muted-foreground">
                 {to.name} chưa nhập tài khoản ngân hàng.{' '}

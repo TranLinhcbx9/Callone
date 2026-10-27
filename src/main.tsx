@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from '@/app/App'
+import { registerPwa } from '@/app/pwa'
 import '@/styles/globals.css'
 
 const rootElement = document.getElementById('root')
@@ -11,3 +12,6 @@ createRoot(rootElement).render(
     <App />
   </StrictMode>,
 )
+
+// Service worker chỉ có ở bản build. Dev server không đăng ký để cache không chồng lên HMR.
+if (import.meta.env.PROD) registerPwa()

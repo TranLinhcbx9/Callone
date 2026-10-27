@@ -1,9 +1,18 @@
 /**
- * Danh sách ngân hàng nhận chuyển khoản qua VietQR, lưu tĩnh để app chạy offline.
+ * Danh sách ngân hàng và ví nhận chuyển khoản qua VietQR, lưu tĩnh để app chạy offline.
  *
  * Nguồn: https://api.vietqr.io/v2/banks, lấy ngày 2026-10-26.
- * API trả 76 mục, giữ 48 mục có transferSupported = 1 (các mục còn lại không nhận được chuyển khoản qua mã QR).
- * Chỉ giữ bin, code, shortName, name và giữ nguyên thứ tự của API. Cần cập nhật thì lấy lại từ API trên.
+ * API trả 76 mục, giữ cả 76 mục, đúng thứ tự của API. Chỉ giữ bin, code, shortName, name.
+ *
+ * Không lọc theo cờ transferSupported của API. Cờ đó nói app của ngân hàng ấy có quét được mã QR để chuyển tiền đi
+ * hay không (phía người trả), không nói tài khoản ở ngân hàng ấy có nhận được tiền hay không (phía người nhận).
+ * Thành viên nào cũng có thể giữ tài khoản ở bất kỳ ngân hàng nào trong danh sách, nên lọc theo cờ này sẽ loại nhầm
+ * cả những ngân hàng như HSBC, Citibank, UOB khỏi danh sách chọn.
+ *
+ * Server nhận mọi BIN 6 chữ số, nên BIN của thành viên có thể không nằm trong danh sách này (danh sách đã cũ, hoặc
+ * dữ liệu nhập từ nơi khác): dùng bankDisplayName để hiện tên thay vì findBankByBin(...)?.shortName.
+ *
+ * File này sinh bằng .cache/scripts/gen-banks.mjs. Cần cập nhật thì lấy lại JSON từ API trên rồi chạy lại script.
  */
 import { normalizeSearch } from '@/modules/bill-split/domain/text'
 import type { Bank } from '@/modules/bill-split/domain/types'
@@ -40,6 +49,18 @@ export const BANKS: readonly Bank[] = [
     shortName: 'Timo',
     name: 'Ngân hàng số Timo by Ban Viet Bank (Timo by Ban Viet Bank)',
   },
+  {
+    bin: '971005',
+    code: 'VTLMONEY',
+    shortName: 'ViettelMoney',
+    name: 'Tổng Công ty Dịch vụ số Viettel - Chi nhánh tập đoàn công nghiệp viễn thông Quân Đội',
+  },
+  {
+    bin: '971011',
+    code: 'VNPTMONEY',
+    shortName: 'VNPTMoney',
+    name: 'Trung tâm dịch vụ tài chính số VNPT- Chi nhánh Tổng công ty truyền thông (VNPT Fintech)',
+  },
   { bin: '970400', code: 'SGICB', shortName: 'SaigonBank', name: 'Ngân hàng TMCP Sài Gòn Công Thương' },
   { bin: '970409', code: 'BAB', shortName: 'BacABank', name: 'Ngân hàng TMCP Bắc Á' },
   { bin: '971133', code: 'PVDB', shortName: 'PVcomBank Pay', name: 'Ngân hàng số PVcomBank' },
@@ -59,21 +80,97 @@ export const BANKS: readonly Bank[] = [
   { bin: '970449', code: 'LPB', shortName: 'LPBank', name: 'Ngân hàng TMCP Lộc Phát Việt Nam' },
   { bin: '970452', code: 'KLB', shortName: 'KienLongBank', name: 'Ngân hàng TMCP Kiên Long' },
   { bin: '668888', code: 'KBank', shortName: 'KBank', name: 'Ngân hàng Đại chúng TNHH Kasikornbank' },
+  {
+    bin: '970466',
+    code: 'KEBHANAHCM',
+    shortName: 'KEBHanaHCM',
+    name: 'Ngân hàng KEB Hana – Chi nhánh Thành phố Hồ Chí Minh',
+  },
+  { bin: '970467', code: 'KEBHANAHN', shortName: 'KEBHANAHN', name: 'Ngân hàng KEB Hana – Chi nhánh Hà Nội' },
+  { bin: '977777', code: 'MAFC', shortName: 'MAFC', name: 'Công ty Tài chính TNHH MTV Mirae Asset (Việt Nam)' },
+  { bin: '999888', code: 'VBSP', shortName: 'VBSP', name: 'Ngân hàng Chính sách Xã hội' },
+  { bin: '963668', code: 'BNP HN', shortName: 'BNP HN', name: 'Ngân hàng BNP Paribas – Chi nhánh Hà Nội' },
+  {
+    bin: '555666',
+    code: 'BIDC',
+    shortName: 'BIDC',
+    name: 'Ngân hàng Đầu Tư Và Phát Triển Campuchia - Chi nhánh Hà Nội',
+  },
+  {
+    bin: '963666',
+    code: 'BNP HCM',
+    shortName: 'BNP HCM',
+    name: 'Ngân hàng BNP Paribas – Chi nhánh Thành phố Hồ Chí Minh',
+  },
   { bin: '971101', code: 'ZALOPAY', shortName: 'ZaloPay', name: 'Ví điện tử ZaloPay' },
+  {
+    bin: '963688',
+    code: 'BOCHK',
+    shortName: 'BOCHK',
+    name: 'Ngân hàng Bank of China (Hong Kong) Limited – Chi nhánh Hồ Chí Minh',
+  },
+  { bin: '970465', code: 'BSP', shortName: 'BSP', name: 'Ngân hàng SinoPac - Chi nhánh Thành phố Hồ Chí Minh' },
+  { bin: '168999', code: 'CUBHCM', shortName: 'CUBHCM', name: 'Ngân hàng Cathay United Bank – Chi nhánh Hồ Chí Minh' },
+  {
+    bin: '963686',
+    code: 'ESUN',
+    shortName: 'ESUN',
+    name: 'Ngân hàng Thương mại TNHH E.SUN – Chi nhánh Đồng Nai (ESUNBANK)',
+  },
+  {
+    bin: '963669',
+    code: 'ICBC',
+    shortName: 'ICBC',
+    name: 'Ngân hàng Công thương Trung Quốc – Chi nhánh thành phố Hà Nội',
+  },
   {
     bin: '971032',
     code: 'MVAS',
     shortName: 'MVAS',
     name: 'Trung tâm Dịch vụ số Mobifone – Chi nhánh Tổng Công ty viễn thông Mobifone',
   },
+  { bin: '963326', code: 'TNEX', shortName: 'TNEX', name: 'TNEX by MSB' },
+  { bin: '458761', code: 'HSBC', shortName: 'HSBC', name: 'Ngân hàng TNHH MTV HSBC (Việt Nam)' },
+  { bin: '970442', code: 'HLBVN', shortName: 'HongLeong', name: 'Ngân hàng TNHH MTV Hong Leong Việt Nam' },
+  {
+    bin: '970455',
+    code: 'IBK - HN',
+    shortName: 'IBKHN',
+    name: 'Ngân hàng Công nghiệp Hàn Quốc - Chi nhánh Hà Nội',
+  },
+  {
+    bin: '970456',
+    code: 'IBK - HCM',
+    shortName: 'IBKHCM',
+    name: 'Ngân hàng Công nghiệp Hàn Quốc - Chi nhánh TP. Hồ Chí Minh',
+  },
   { bin: '970434', code: 'IVB', shortName: 'IndovinaBank', name: 'Ngân hàng TNHH Indovina' },
+  { bin: '970406', code: 'Vikki', shortName: 'Vikki', name: 'Ngân hàng TNHH Một thành viên số Vikki' },
+  { bin: '801011', code: 'NHB HN', shortName: 'Nonghyup', name: 'Ngân hàng Nonghyup - Chi nhánh Hà Nội' },
+  { bin: '796500', code: 'DBS', shortName: 'DBSBank', name: 'DBS Bank Ltd - Chi nhánh Thành phố Hồ Chí Minh' },
+  { bin: '970439', code: 'PBVN', shortName: 'PublicBank', name: 'Ngân hàng TNHH MTV Public Việt Nam' },
+  {
+    bin: '970410',
+    code: 'SCVN',
+    shortName: 'StandardChartered',
+    name: 'Ngân hàng TNHH MTV Standard Chartered Bank Việt Nam',
+  },
+  { bin: '533948', code: 'CITIBANK', shortName: 'Citibank', name: 'Ngân hàng Citibank, N.A. - Chi nhánh Hà Nội' },
   { bin: '422589', code: 'CIMB', shortName: 'CIMB', name: 'Ngân hàng TNHH MTV CIMB Việt Nam' },
+  {
+    bin: '970458',
+    code: 'UOB',
+    shortName: 'UnitedOverseas',
+    name: 'Ngân hàng United Overseas - Chi nhánh TP. Hồ Chí Minh',
+  },
   {
     bin: '970444',
     code: 'CBB',
     shortName: 'CBBank',
     name: 'Ngân hàng Thương mại trách nhiệm hữu hạn một thành viên Ngoại thương Công nghệ số (Vietcombank Neo Limited)',
   },
+  { bin: '970408', code: 'GPB', shortName: 'GPBank', name: 'Ngân hàng Thương mại TNHH MTV Dầu Khí Toàn Cầu' },
+  { bin: '970421', code: 'VRB', shortName: 'VRB', name: 'Ngân hàng Liên doanh Việt - Nga' },
   { bin: '970457', code: 'WVN', shortName: 'Woori', name: 'Ngân hàng TNHH MTV Woori Việt Nam' },
   { bin: '970462', code: 'KBHN', shortName: 'KookminHN', name: 'Ngân hàng Kookmin - Chi nhánh Hà Nội' },
   {
@@ -91,6 +188,15 @@ export function findBankByBin(bin: string | null | undefined, banks?: readonly B
   if (!bin) return undefined
   if (banks === undefined) return BANK_BY_BIN.get(bin)
   return banks.find((bank) => bank.bin === bin)
+}
+
+/**
+ * Tên để hiện cho một mã BIN: tên ngắn nếu BIN có trong danh sách ("Vietcombank"), không thì "Ngân hàng <bin>"
+ * (server nhận mọi BIN 6 chữ số). Không có BIN thì chỉ là "Ngân hàng". Không bao giờ trả chuỗi rỗng.
+ */
+export function bankDisplayName(bin: string | null | undefined, banks?: readonly Bank[]): string {
+  if (!bin) return 'Ngân hàng'
+  return findBankByBin(bin, banks)?.shortName ?? `Ngân hàng ${bin}`
 }
 
 /**

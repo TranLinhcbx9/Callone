@@ -60,9 +60,18 @@ $$;
 -- Chuỗi
 -- ---------------------------------------------------------------------------
 
+-- "Trắng" là mọi ký tự không hiện ra gì mà người dùng hay dán nhầm vào ô nhập: khoảng trắng ASCII (tab,
+-- xuống dòng, VT, FF, CR, dấu cách), toàn bộ Unicode White_Space (NEL U+0085, NBSP U+00A0, U+1680,
+-- U+2000 tới U+200A, U+2028, U+2029, U+202F, U+205F, U+3000) và các ký tự rộng bằng không
+-- U+200B tới U+200D, U+2060, U+FEFF. Lớp ký tự viết tường minh bằng mã, không dùng \s hay [[:space:]]
+-- vì hai lớp đó phụ thuộc locale của database (NBSP thường không được tính là khoảng trắng).
+-- clean và strip_blank cùng dùng lớp này: sửa thì sửa cả hai, và sửa test 11_bill_split_blank_text.
+--
 -- Chuẩn hóa chuỗi người dùng nhập: về dạng NFC (tiếng Việt gõ ở nguồn khác nhau có thể là dạng
 -- tổ hợp hoặc dựng sẵn, nếu không chuẩn hóa thì "Hưng" có thể bị coi là hai tên khác nhau),
--- cắt khoảng trắng, tab và xuống dòng ở hai đầu. Rỗng thì trả null.
+-- cắt ký tự trắng ở hai đầu. Rỗng (hoặc chỉ toàn ký tự trắng) thì trả null.
+-- Cắt hai đầu bằng hai regexp_replace neo ^ và $ riêng. Đã đo (PGlite): chuỗi 2 triệu ký tự xen kẽ ký tự
+-- trắng chạy dưới 0,2 giây, không chậm theo cấp số nhân.
 create function bill_split.clean(p_text text)
 returns text
 language sql
@@ -70,7 +79,38 @@ immutable
 security definer
 set search_path = ''
 as $$
-  select nullif(btrim(normalize(p_text, nfc), E' \t\r\n'), '');
+  select nullif(
+    regexp_replace(
+      regexp_replace(
+        normalize(p_text, nfc),
+        '^[\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]+',
+        ''
+      ),
+      '[\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]+$',
+      ''
+    ),
+    ''
+  );
+$$;
+
+-- Bỏ MỌI ký tự trắng ở bất kỳ đâu trong chuỗi (số tài khoản ngân hàng hay được dán kèm dấu cách,
+-- NBSP hoặc ký tự rộng bằng không). Rỗng thì trả null.
+create function bill_split.strip_blank(p_text text)
+returns text
+language sql
+immutable
+security definer
+set search_path = ''
+as $$
+  select nullif(
+    regexp_replace(
+      normalize(p_text, nfc),
+      '[\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]+',
+      '',
+      'g'
+    ),
+    ''
+  );
 $$;
 
 -- Trường bắt buộc: required khi rỗng, too_long khi vượt p_max ký tự. Trả về chuỗi đã chuẩn hóa.
@@ -165,10 +205,12 @@ begin
 end;
 $$;
 
--- Như find_group nhưng khóa dòng nhóm (for update) để các thao tác ghi trên cùng nhóm chạy lần lượt.
+-- Tìm nhóm chưa xóa theo token và khóa dòng nhóm (for update) để các thao tác ghi trên cùng nhóm chạy
+-- lần lượt. Không thấy nhóm thì trả null, không raise (bs_rotate_token cần phân biệt "token cũ đã
+-- đổi" với "token sai" để nhận lời gửi lại; mọi hàm khác dùng lock_group bên dưới).
 -- Nếu trong lúc chờ khóa mà nhóm bị xóa hoặc đổi token thì điều kiện where được đánh giá lại và
--- không còn dòng nào, nên người chờ nhận BS_GROUP_NOT_FOUND.
-create function bill_split.lock_group(p_token text)
+-- không còn dòng nào, nên người chờ nhận null.
+create function bill_split.try_lock_group(p_token text)
 returns uuid
 language plpgsql
 volatile
@@ -186,11 +228,60 @@ begin
        and g.deleted_at is null
        for update;
   end if;
+  return v_group_id;
+end;
+$$;
 
+-- Như try_lock_group nhưng không thấy nhóm thì raise BS_GROUP_NOT_FOUND (cùng một lỗi cho token sai
+-- định dạng, không tồn tại, đã đổi và nhóm đã xóa).
+create function bill_split.lock_group(p_token text)
+returns uuid
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_group_id uuid := bill_split.try_lock_group(p_token);
+begin
   if v_group_id is null then
     perform bill_split.fail(404, 'BS_GROUP_NOT_FOUND');
   end if;
   return v_group_id;
+end;
+$$;
+
+-- bs_create_group được gửi lại với cùng token do client sinh: nếu đã có nhóm chưa xóa giữ token này thì
+-- trả đúng { token, snapshot } của nhóm đó (không tạo gì, không tính vào giới hạn tốc độ). Chỉ có nhóm
+-- đã xóa mềm giữ token thì BS_INVALID id_taken, vì token của nhóm đã xóa không được dùng lại. Chưa có
+-- nhóm nào (hoặc p_token null) thì trả null.
+create function bill_split.replay_create(p_token text)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_group_id uuid;
+  v_deleted  boolean;
+begin
+  if p_token is null then
+    return null;
+  end if;
+
+  select g.id, g.deleted_at is not null
+    into v_group_id, v_deleted
+    from bill_split.groups g
+   where g.token_hash = bill_split.hash_token(p_token);
+  if not found then
+    return null;
+  end if;
+
+  if v_deleted then
+    perform bill_split.invalid('token', 'id_taken');
+  end if;
+  return jsonb_build_object('token', p_token, 'snapshot', bill_split.build_snapshot(v_group_id));
 end;
 $$;
 
@@ -203,6 +294,100 @@ security definer
 set search_path = ''
 as $$
   update bill_split.groups set updated_at = now() where id = p_group_id;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Giới hạn tốc độ tạo nhóm (mục 6 và 7 của hợp đồng)
+-- ---------------------------------------------------------------------------
+
+-- Khóa của client đang gọi: sha256 (hex, chữ thường) của địa chỉ IP, lấy từ header mà PostgREST đặt
+-- vào GUC request.headers (một JSON, tên header viết thường). Thứ tự ưu tiên:
+--   1. cf-connecting-ip: Cloudflare luôn ghi đè bằng IP thật nên client không giả được. Supabase cloud
+--      đi qua Cloudflare nên đây là nguồn đáng tin.
+--   2. Địa chỉ đầu tiên của x-forwarded-for.
+--   3. x-real-ip.
+-- Header nào rỗng thì bỏ qua và xét header kế. Không có header nào dùng được (hoặc chạy ngoài
+-- PostgREST nên không có GUC, hoặc GUC không phải JSON object) thì trả đúng chữ 'unknown': một bucket
+-- chung cho mọi request như vậy. Hàm chỉ đọc GUC nên stable.
+create function bill_split.client_key()
+returns text
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_raw     text := nullif(current_setting('request.headers', true), '');
+  v_headers jsonb;
+  v_ip      text;
+begin
+  if v_raw is not null then
+    -- PostgREST luôn ghi JSON hợp lệ. Bắt lỗi chỉ để một giá trị lạ không làm hỏng việc tạo nhóm.
+    begin
+      v_headers := v_raw::jsonb;
+    exception when others then
+      v_headers := null;
+    end;
+  end if;
+
+  if jsonb_typeof(v_headers) = 'object' then
+    select bill_split.clean(split_part(h.value, ',', 1))
+      into v_ip
+      from jsonb_each_text(v_headers) as h(key, value)
+     where lower(h.key) in ('cf-connecting-ip', 'x-forwarded-for', 'x-real-ip')
+       and bill_split.clean(split_part(h.value, ',', 1)) is not null
+     order by case lower(h.key)
+                when 'cf-connecting-ip' then 1
+                when 'x-forwarded-for' then 2
+                else 3
+              end
+     limit 1;
+  end if;
+
+  if v_ip is null then
+    return 'unknown';
+  end if;
+  return encode(sha256(convert_to(lower(v_ip), 'UTF8')), 'hex');
+end;
+$$;
+
+-- Giữ một chỗ trong giới hạn tạo nhóm cho client hiện tại, hoặc raise BS_RATE_LIMITED (429).
+-- Cửa sổ trượt 10 phút, hai giới hạn đều đếm trong cửa sổ đó:
+--   * mỗi client (client_key): mặc định 5 lần tạo,
+--   * toàn hệ thống: mặc định 100 lần tạo.
+-- Ghi đè bằng bill_split.settings (create_limit_client, create_limit_global), thiếu dòng thì dùng mặc định
+-- ở đây. Dòng cũ hơn cửa sổ bị xóa ngay mỗi lần gọi nên create_log chỉ giữ cửa sổ hiện tại.
+-- Gọi mỗi lần tạo nhóm mới (không gọi khi gửi lại), và PHẢI gọi khi đang giữ advisory lock của
+-- bs_create_group: lock đó làm các lần tạo chạy lần lượt nên đếm rồi thêm không bị hai lần tạo cùng
+-- lọt qua. Dòng log được thêm ngay ở đây, trước khi kiểm dữ liệu; nếu bước kiểm dữ liệu hay bước ghi
+-- sau đó lỗi thì cả transaction (kể cả dòng log) bị rollback, nên chỉ lần tạo thành công mới chiếm chỗ.
+create function bill_split.take_create_slot()
+returns void
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_window       constant interval := interval '10 minutes';
+  v_client       text := bill_split.client_key();
+  v_limit_client integer;
+  v_limit_global integer;
+begin
+  select s.value into v_limit_client from bill_split.settings s where s.key = 'create_limit_client';
+  select s.value into v_limit_global from bill_split.settings s where s.key = 'create_limit_global';
+  v_limit_client := coalesce(v_limit_client, 5);
+  v_limit_global := coalesce(v_limit_global, 100);
+
+  delete from bill_split.create_log l where l.created_at <= now() - v_window;
+
+  if (select count(*) from bill_split.create_log l where l.client_hash = v_client) >= v_limit_client
+     or (select count(*) from bill_split.create_log l) >= v_limit_global then
+    perform bill_split.fail(429, 'BS_RATE_LIMITED');
+  end if;
+
+  insert into bill_split.create_log (client_hash) values (v_client);
+end;
 $$;
 
 -- ---------------------------------------------------------------------------

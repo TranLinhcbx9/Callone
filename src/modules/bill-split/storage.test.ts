@@ -6,6 +6,7 @@ import {
   createBillSplitStore,
   readBank,
   readMeMap,
+  readPendingRotations,
   readRecentGroups,
   type RecentGroup,
 } from '@/modules/bill-split/storage'
@@ -15,6 +16,7 @@ const T1 = 'dalat-demo-token-2026-ok'
 const T2 = 'lau-thu-sau-demo-token-1'
 const T3 = 'Ab_-Cd0123456789EfGhIjKl'
 const NEW = 'NewTokenAfterRotate_0123'
+const NEW2 = 'SecondCandidateToken_012'
 const KEY = (name: string) => `callone:bill-split:${name}`
 
 function memoryBackend(): KeyValueStore & { data: Map<string, string> } {
@@ -59,14 +61,35 @@ describe('readRecentGroups', () => {
     ])
   })
 
-  it('không phải mảng thì rỗng; cắt tên dài và giữ tối đa 30 nhóm mới nhất', () => {
+  it('không phải mảng thì rỗng; cắt tên dài; không cắt bớt số nhóm vì đọc lại không được làm rớt nhóm nào', () => {
     for (const raw of [null, undefined, {}, 'x', 5]) expect(readRecentGroups(raw)).toEqual([])
-    const many = Array.from({ length: 40 }, (_, index) => ({ token: tokenOf(index), name: 'x'.repeat(200), lastOpenedAt: index }))
+    const many = Array.from({ length: MAX_RECENT_GROUPS + 40 }, (_, index) => ({
+      token: tokenOf(index),
+      name: 'x'.repeat(200),
+      lastOpenedAt: index,
+    }))
     const result = readRecentGroups(many)
-    expect(result).toHaveLength(MAX_RECENT_GROUPS)
-    expect(result[0]?.lastOpenedAt).toBe(39)
-    expect(result[MAX_RECENT_GROUPS - 1]?.lastOpenedAt).toBe(10)
+    expect(result).toHaveLength(MAX_RECENT_GROUPS + 40)
+    expect(result[0]?.lastOpenedAt).toBe(MAX_RECENT_GROUPS + 39)
+    expect(result.at(-1)?.lastOpenedAt).toBe(0)
     expect(result[0]?.name).toHaveLength(80)
+  })
+})
+
+describe('readPendingRotations', () => {
+  it('giữ mục hợp lệ, bỏ mục sai hình dạng, token sai định dạng hoặc token mới trùng token cũ', () => {
+    const raw = {
+      [T1]: { newToken: NEW, startedAt: 5 },
+      [T2]: { newToken: T2, startedAt: 6 },
+      [T3]: { newToken: 'ngan', startedAt: 7 },
+      ngan: { newToken: NEW, startedAt: 8 },
+      ['y'.repeat(24)]: { newToken: NEW, startedAt: '9' },
+      ['z'.repeat(24)]: { newToken: NEW, startedAt: Number.NaN },
+      ['w'.repeat(24)]: null,
+      ['v'.repeat(24)]: 'chuỗi',
+    }
+    expect(readPendingRotations(raw)).toEqual({ [T1]: { newToken: NEW, startedAt: 5 } })
+    for (const bad of [null, undefined, [], 'x', 3]) expect(readPendingRotations(bad)).toEqual({})
   })
 })
 
@@ -118,21 +141,49 @@ describe('createBillSplitStore: nhóm gần đây', () => {
     expect(store.getRecentGroups()).toEqual([])
   })
 
-  it('giữ tối đa 30 nhóm, nhóm cũ nhất rớt khỏi danh sách cùng với "mình là ai" của nó', () => {
-    const { store, tick } = setup()
+  it('tối đa 200 nhóm: nhóm thứ 201 bị từ chối chứ không xóa nhóm cũ nào, và "mình là ai" còn nguyên', () => {
+    expect(MAX_RECENT_GROUPS).toBe(200)
+    const { store, tick, backend } = setup()
     for (let index = 0; index < MAX_RECENT_GROUPS; index++) {
-      store.rememberGroup(tokenOf(index), `Nhóm ${index}`)
+      expect(store.rememberGroup(tokenOf(index), `Nhóm ${index}`), String(index)).toBe('saved')
       store.setMe(tokenOf(index), `member-${index}`)
       tick()
     }
     expect(store.getRecentGroups()).toHaveLength(MAX_RECENT_GROUPS)
-    store.rememberGroup(tokenOf(99), 'Nhóm mới')
-    const recents = store.getRecentGroups()
-    expect(recents).toHaveLength(MAX_RECENT_GROUPS)
-    expect(recents[0]?.token).toBe(tokenOf(99))
-    expect(recents.some((g) => g.token === tokenOf(0))).toBe(false)
-    expect(store.getMe(tokenOf(0))).toBeNull()
-    expect(store.getMe(tokenOf(1))).toBe('member-1')
+    expect(store.isRecentGroupsFull()).toBe(true)
+
+    const before = store.getRecentGroups()
+    const listener = vi.fn<() => void>()
+    store.subscribe(listener)
+    expect(store.rememberGroup(tokenOf(999), 'Nhóm thứ 201')).toBe('full')
+    // Không đổi gì, không ghi xuống máy, không báo người nghe.
+    expect(store.getRecentGroups()).toBe(before)
+    expect(listener).not.toHaveBeenCalled()
+    expect(store.getRecentGroups().some((g) => g.token === tokenOf(999))).toBe(false)
+    expect(store.getRecentGroups().some((g) => g.token === tokenOf(0))).toBe(true)
+    expect(store.getMe(tokenOf(0))).toBe('member-0')
+    expect(JSON.parse(backend.data.get(KEY('recent-groups')) ?? '[]')).toHaveLength(MAX_RECENT_GROUPS)
+
+    // Nhóm đã có thì vẫn cập nhật được dù danh sách đầy.
+    tick()
+    expect(store.rememberGroup(tokenOf(0), 'Nhóm 0 đổi tên')).toBe('saved')
+    expect(store.getRecentGroups()[0]).toMatchObject({ token: tokenOf(0), name: 'Nhóm 0 đổi tên' })
+    expect(store.getRecentGroups()).toHaveLength(MAX_RECENT_GROUPS)
+
+    // Quên bớt một nhóm thì có chỗ cho nhóm mới.
+    store.forgetGroup(tokenOf(5))
+    expect(store.isRecentGroupsFull()).toBe(false)
+    expect(store.rememberGroup(tokenOf(999), 'Nhóm thứ 201')).toBe('saved')
+    expect(store.getRecentGroups()).toHaveLength(MAX_RECENT_GROUPS)
+    expect(store.getMe(tokenOf(5))).toBeNull()
+    expect(store.getMe(tokenOf(6))).toBe('member-6')
+  })
+
+  it('rememberGroup báo invalid khi token sai định dạng', () => {
+    const { store } = setup()
+    expect(store.rememberGroup('ngan', 'Sai')).toBe('invalid')
+    expect(store.rememberGroup('', 'Rỗng')).toBe('invalid')
+    expect(store.rememberGroup(T1, 'Đúng')).toBe('saved')
   })
 
   it('dữ liệu ghi xuống được store mới đọc lại đúng, và dữ liệu hỏng trong storage bị bỏ', () => {
@@ -168,6 +219,19 @@ describe('createBillSplitStore: nhóm gần đây', () => {
     expect(store.getRecentGroups()).toHaveLength(1)
   })
 
+  it('forgetGroup bỏ luôn lần đổi link đang chờ của nhóm đó, giữ lần của nhóm khác', () => {
+    const { store, backend } = setup()
+    store.rememberGroup(T1, 'A')
+    store.beginRotation(T1, NEW)
+    store.beginRotation(T2, NEW2)
+    store.forgetGroup(T1)
+    expect(store.getPendingRotation(T1)).toBeNull()
+    expect(store.getPendingRotation(T2)).toMatchObject({ newToken: NEW2 })
+    expect(Object.keys(JSON.parse(backend.data.get(KEY('pending-rotations')) ?? '{}'))).toEqual([T2])
+    store.forgetGroup(T2)
+    expect(backend.data.has(KEY('pending-rotations'))).toBe(false)
+  })
+
   it('replaceToken chuyển nhóm và "mình là ai" sang token mới, đưa lên đầu', () => {
     const { store, tick } = setup()
     store.rememberGroup(T1, 'Đà Lạt')
@@ -179,6 +243,27 @@ describe('createBillSplitStore: nhóm gần đây', () => {
     expect(store.getRecentGroups().map((g) => [g.token, g.name])).toEqual([[NEW, 'Đà Lạt'], [T2, 'Lẩu']])
     expect(store.getMe(NEW)).toBe('m1')
     expect(store.getMe(T1)).toBeNull()
+  })
+
+  it('replaceToken xóa luôn lần đổi link đang chờ của token cũ trong cùng một lần ghi', () => {
+    const { store, backend } = setup()
+    store.rememberGroup(T1, 'Đà Lạt')
+    store.setMe(T1, 'm1')
+    store.beginRotation(T1, NEW)
+    store.beginRotation(T2, NEW2)
+    const listener = vi.fn<() => void>()
+    store.subscribe(listener)
+
+    store.replaceToken(T1, NEW)
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(store.getPendingRotation(T1)).toBeNull()
+    expect(store.getPendingRotation(T2)).toEqual({ newToken: NEW2, startedAt: 1_000 })
+    expect(store.getRecentGroups().map((g) => g.token)).toEqual([NEW])
+    expect(store.getMe(NEW)).toBe('m1')
+    expect(JSON.parse(backend.data.get(KEY('pending-rotations')) ?? 'null')).toEqual({
+      [T2]: { newToken: NEW2, startedAt: 1_000 },
+    })
   })
 
   it('replaceToken không làm gì khi token mới sai định dạng hoặc trùng token cũ', () => {
@@ -221,6 +306,173 @@ describe('createBillSplitStore: mình là ai và ngân hàng gần nhất', () =
     store.setLastBank(bank)
     store.setLastBank(null)
     expect(store.getLastBank()).toBeNull()
+  })
+
+  it('nhớ ngân hàng ở dạng đã chuẩn hóa như rpc.ts gửi lên, nên số tài khoản có dấu cách không bị từ chối rồi xóa mất', () => {
+    const { store, backend, create } = setup()
+    store.setLastBank({ bin: '970436', accountNumber: '0123 456 789', accountName: 'Nguyễn Văn Dũng' })
+    const normalized = { bin: '970436', accountNumber: '0123456789', accountName: 'NGUYEN VAN DUNG' }
+    expect(store.getLastBank()).toEqual(normalized)
+    expect(JSON.parse(backend.data.get(KEY('last-bank')) ?? 'null')).toEqual(normalized)
+    expect(create().getLastBank()).toEqual(normalized)
+
+    store.setLastBank({ bin: '970422', accountNumber: ' 9 8 7 ', accountName: '   ' })
+    expect(store.getLastBank()).toEqual({ bin: '970422', accountNumber: '987', accountName: null })
+  })
+
+  it('số tài khoản dán kèm NBSP và ký tự vô hình cũng được nhớ ở dạng sạch', () => {
+    const { store } = setup()
+    const junk = String.fromCodePoint(0xa0, 0x200b, 0x200e, 0x2060, 0xfeff)
+    store.setLastBank({ bin: '970436', accountNumber: `${junk}0123 456${junk}789`, accountName: null })
+    expect(store.getLastBank()).toEqual({ bin: '970436', accountNumber: '0123456789', accountName: null })
+  })
+
+  it('ngân hàng mà sau chuẩn hóa vẫn sai (BIN sai, số tài khoản rỗng hoặc dài quá 19) thì xóa ngân hàng đã nhớ', () => {
+    const { store } = setup()
+    const good = { bin: '970436', accountNumber: '0123456789', accountName: null }
+    for (const bad of [
+      { ...good, bin: '97043' },
+      { ...good, accountNumber: '   ' },
+      { ...good, accountNumber: '1234 5678 9012 3456 7890' },
+      { ...good, accountNumber: '01-23' },
+    ]) {
+      store.setLastBank(good)
+      store.setLastBank(bad)
+      expect(store.getLastBank(), JSON.stringify(bad)).toBeNull()
+    }
+  })
+})
+
+describe('createBillSplitStore: lần đổi link đang chờ server xác nhận', () => {
+  it('beginRotation ghi xuống máy ngay (đồng bộ) và trả về lần đang chờ', () => {
+    const { store, backend, tick } = setup()
+    tick()
+    const pending = store.beginRotation(T1, NEW)
+    expect(pending).toEqual({ newToken: NEW, startedAt: 2_000 })
+    // Không có await nào giữa lời gọi và dòng này: dữ liệu đã nằm trong localStorage.
+    expect(JSON.parse(backend.data.get(KEY('pending-rotations')) ?? 'null')).toEqual({ [T1]: pending })
+    expect(store.getPendingRotation(T1)).toBe(pending)
+    expect(store.getPendingRotation(T2)).toBeNull()
+  })
+
+  it('đang chờ thì mọi lần beginRotation sau trả đúng lần cũ, không bao giờ chọn token mới thứ hai', () => {
+    const { store, tick } = setup()
+    const first = store.beginRotation(T1, NEW)
+    tick()
+    expect(store.beginRotation(T1, NEW2)).toBe(first)
+    expect(store.beginRotation(T1, 'AnotherCandidateToken_01')).toBe(first)
+    expect(store.getPendingRotation(T1)).toEqual({ newToken: NEW, startedAt: 1_000 })
+    // Token cũ khác nhau thì độc lập.
+    expect(store.beginRotation(T2, NEW2)).toEqual({ newToken: NEW2, startedAt: 2_000 })
+  })
+
+  it('còn nguyên sau khi mở lại app (store mới đọc từ localStorage)', () => {
+    const { store, create } = setup()
+    const pending = store.beginRotation(T1, NEW)
+    expect(create().getPendingRotation(T1)).toEqual(pending)
+    expect(create().beginRotation(T1, NEW2)).toEqual(pending)
+  })
+
+  it('clearPendingRotation bỏ mục đó, xóa hẳn khóa khi hết mục, và không báo người nghe nếu không có gì để bỏ', () => {
+    const { store, backend } = setup()
+    store.beginRotation(T1, NEW)
+    store.beginRotation(T2, NEW2)
+    const listener = vi.fn<() => void>()
+    store.subscribe(listener)
+
+    store.clearPendingRotation(T3)
+    expect(listener).not.toHaveBeenCalled()
+
+    store.clearPendingRotation(T1)
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(store.getPendingRotation(T1)).toBeNull()
+    expect(Object.keys(JSON.parse(backend.data.get(KEY('pending-rotations')) ?? '{}'))).toEqual([T2])
+
+    store.clearPendingRotation(T2)
+    expect(backend.data.has(KEY('pending-rotations'))).toBe(false)
+    // Sau khi bỏ thì lần sau chọn token mới được.
+    expect(store.beginRotation(T1, NEW2)).toMatchObject({ newToken: NEW2 })
+  })
+
+  it('báo người nghe khi có lần đổi link mới, và getter giữ cùng tham chiếu khi không đổi', () => {
+    const { store } = setup()
+    const listener = vi.fn<() => void>()
+    store.subscribe(listener)
+    const pending = store.beginRotation(T1, NEW)
+    expect(listener).toHaveBeenCalledTimes(1)
+    store.beginRotation(T1, NEW2)
+    expect(listener).toHaveBeenCalledTimes(1)
+    store.setMe(T2, 'm')
+    expect(store.getPendingRotation(T1)).toBe(pending)
+  })
+
+  it('tab khác vừa ghi lần đổi link cho cùng token thì dùng lại token đó, không chọn token thứ hai', () => {
+    const { store, create } = setup()
+    expect(store.getPendingRotation(T1)).toBeNull()
+    // Tab khác (store khác, cùng localStorage) bắt đầu đổi link trước khi tab này kịp nhận sự kiện storage.
+    const other = create().beginRotation(T1, NEW)
+    const listener = vi.fn<() => void>()
+    store.subscribe(listener)
+    expect(store.beginRotation(T1, NEW2)).toEqual(other)
+    expect(store.getPendingRotation(T1)).toEqual(other)
+    expect(listener).toHaveBeenCalledTimes(1)
+  })
+
+  it('sự kiện storage từ tab khác nạp lại lần đổi link đang chờ', () => {
+    const { store, create, eventTarget } = setup()
+    store.subscribe(() => undefined)
+    expect(store.getPendingRotation(T1)).toBeNull()
+    create().beginRotation(T1, NEW)
+    eventTarget.dispatchEvent(Object.assign(new Event('storage'), { key: KEY('pending-rotations') }))
+    expect(store.getPendingRotation(T1)).toMatchObject({ newToken: NEW })
+  })
+
+  it('trình duyệt chặn ghi thì vẫn giữ lần đang chờ trong bộ nhớ của phiên, không chọn token thứ hai', () => {
+    const blocked: KeyValueStore = {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error('quota')
+      },
+      removeItem: () => {
+        throw new Error('blocked')
+      },
+    }
+    const store = createBillSplitStore({ storage: createModuleStorage('bill-split', blocked), eventTarget: null })
+    const first = store.beginRotation(T1, NEW)
+    expect(store.beginRotation(T1, NEW2)).toBe(first)
+    expect(store.getPendingRotation(T1)).toBe(first)
+    store.clearPendingRotation(T1)
+    expect(store.getPendingRotation(T1)).toBeNull()
+  })
+
+  it('token sai định dạng hoặc trùng nhau là lỗi lập trình nên ném RangeError và không ghi gì', () => {
+    const { store, backend } = setup()
+    expect(() => store.beginRotation('ngan', NEW)).toThrow(RangeError)
+    expect(() => store.beginRotation(T1, 'ngan')).toThrow(RangeError)
+    expect(() => store.beginRotation(T1, T1)).toThrow(RangeError)
+    expect(backend.data.has(KEY('pending-rotations'))).toBe(false)
+  })
+
+  it('dữ liệu hỏng trong storage bị bỏ', () => {
+    const { create, backend } = setup()
+    backend.data.set(KEY('pending-rotations'), JSON.stringify({ [T1]: { newToken: 'ngan', startedAt: 1 }, [T2]: 5 }))
+    expect(create().getPendingRotation(T1)).toBeNull()
+    expect(create().getPendingRotation(T2)).toBeNull()
+    backend.data.set(KEY('pending-rotations'), '{không phải json')
+    expect(create().getPendingRotation(T1)).toBeNull()
+  })
+})
+
+describe('createBillSplitStore: khóa trùng tên thuộc tính của Object', () => {
+  it('"constructor" hay "toString" làm token thì không trả về hàm của Object và không ghi gì thừa', () => {
+    const { store, backend } = setup()
+    for (const key of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      expect(store.getMe(key), key).toBeNull()
+      expect(store.getPendingRotation(key), key).toBeNull()
+      store.clearPendingRotation(key)
+      store.forgetGroup(key)
+    }
+    expect(backend.data.has(KEY('pending-rotations'))).toBe(false)
   })
 })
 

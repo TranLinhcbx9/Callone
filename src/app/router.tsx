@@ -1,9 +1,10 @@
 import { createBrowserRouter, type RouteObject } from 'react-router'
-import { AppShell } from '@/app/layout/AppShell'
+import { AppLoading } from '@/app/layout/AppLoading'
 import { ModuleGate } from '@/app/ModuleGate'
 import { RouteError } from '@/app/pages/RouteError'
 import { modules } from '@/app/registry'
 import { installPreloadErrorHandler } from '@/app/preloadError'
+import { RootLayout } from '@/app/RootLayout'
 
 const moduleRoutes: RouteObject[] = modules.map((module) => ({
   path: module.basePath,
@@ -22,7 +23,9 @@ installPreloadErrorHandler()
 
 export const router = createBrowserRouter([
   {
-    element: <AppShell />,
+    element: <RootLayout />,
+    // Chờ tải trang đầu tiên (route lazy) thì hiện màn hình chờ thay vì cảnh báo thiếu HydrateFallback.
+    HydrateFallback: AppLoading,
     errorElement: <RouteError />,
     children: [
       { index: true, lazy: () => import('@/app/pages/HomePage').then((m) => ({ Component: m.HomePage })) },

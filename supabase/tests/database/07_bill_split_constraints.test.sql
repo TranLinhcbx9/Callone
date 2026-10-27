@@ -6,7 +6,7 @@ set local search_path = public, extensions;
 -- Khóa ngoại trỏ tới members khai báo deferrable initially deferred; kiểm ngay trong test để lỗi lộ ra tại câu lệnh.
 set constraints all immediate;
 
-select plan(45);
+select plan(50);
 
 -- Chạy một câu SQL: null nếu thành công, nếu lỗi thì { state, constraint }.
 create function pg_temp.err(p_sql text) returns jsonb
@@ -263,6 +263,35 @@ select is(
 );
 
 -- ---------------------------------------------------------------------------
+-- settings và create_log (giới hạn tốc độ tạo nhóm)
+-- ---------------------------------------------------------------------------
+-- Có sẵn một dòng create_limit_client (seed có thể đã tạo, nên ghi đè) để thử trùng khóa.
+insert into bill_split.settings (key, value) values ('create_limit_client', 5)
+on conflict (key) do update set value = excluded.value;
+
+select pg_temp.violates(
+  $$insert into bill_split.settings (key, value) values ('khong_ton_tai', 1)$$,
+  '23514', 'settings_key_known', 'settings: chỉ nhận các khóa đã biết, gõ sai khóa là lỗi chứ không âm thầm bị bỏ qua'
+);
+select pg_temp.violates(
+  $$insert into bill_split.settings (key, value) values ('create_limit_global', -1)$$,
+  '23514', 'settings_value_nonnegative', 'settings: giá trị không được âm'
+);
+select pg_temp.violates(
+  $$insert into bill_split.settings (key, value) values ('create_limit_client', 7)$$,
+  '23505', 'settings_pkey', 'settings: mỗi khóa đúng một dòng'
+);
+select lives_ok(
+  $$update bill_split.settings set value = 0 where key = 'create_limit_client'$$,
+  'settings: giá trị 0 hợp lệ (công tắc khẩn chặn hẳn việc tạo nhóm)'
+);
+select is(
+  pg_temp.err($$insert into bill_split.create_log (client_hash) values (null)$$) ->> 'state',
+  '23502',
+  'create_log: client_hash không được null'
+);
+
+-- ---------------------------------------------------------------------------
 -- Cấu trúc
 -- ---------------------------------------------------------------------------
 select is(
@@ -291,7 +320,7 @@ select is(
   0::bigint,
   'mọi khóa ngoại của bill_split đều có index phủ (các cột đầu của một index)'
 );
-select ok(to_regclass('bill_split.groups_created_at_idx') is not null, 'có index groups (created_at) cho giới hạn tốc độ tạo nhóm');
+select ok(to_regclass('bill_split.create_log_created_at_idx') is not null, 'có index create_log (created_at) để dọn và đếm cửa sổ giới hạn tốc độ tạo nhóm');
 select ok(to_regclass('bill_split.members_group_id_lower_name_key') is not null, 'có unique index members (group_id, lower(name))');
 
 select * from finish();

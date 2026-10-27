@@ -1,4 +1,5 @@
 import type { FormEvent } from 'react'
+import { mergeMemberNames } from '@/modules/bill-split/domain/groupForm'
 import { Spinner } from '@/shared/ui/Spinner'
 import { ChipInput } from '@/shared/ui/ChipInput'
 import { Field } from '@/shared/ui/Field'
@@ -12,11 +13,14 @@ export interface CreateGroupFormProps {
   onNameChange: (name: string) => void
   memberNames: string[]
   onMemberNamesChange: (names: string[]) => void
-  onSubmit: () => void
+  /** Nhận danh sách tên đã gồm cả tên đang gõ dở trong ô thành viên (chưa bấm Enter). */
+  onSubmit: (memberNames: string[]) => void
   isSubmitting?: boolean
   errors?: { name?: string; members?: string }
   /** Số người tối đa trong một nhóm. */
   maxMembers?: number
+  /** Focus sẵn vào ô tên nhóm khi mở trang. */
+  autoFocus?: boolean
 }
 
 /**
@@ -32,10 +36,17 @@ export function CreateGroupForm({
   isSubmitting,
   errors,
   maxMembers = 50,
+  autoFocus,
 }: CreateGroupFormProps) {
   function submit(event: FormEvent) {
     event.preventDefault()
-    onSubmit()
+    // Safari trên iPhone không làm ô nhập mất focus khi bấm nút, nên tên đang gõ dở chưa được ChipInput thêm vào
+    // danh sách. Gộp nốt vào đây để người dùng gõ "Hưng" rồi bấm thẳng "Tạo nhóm" không bị mất một người.
+    const field = document.getElementById('group-members')
+    const pending = field instanceof HTMLInputElement ? field.value : ''
+    const names = pending.trim() === '' ? memberNames : mergeMemberNames(memberNames, pending, maxMembers)
+    if (names !== memberNames) onMemberNamesChange(names)
+    onSubmit(names)
   }
 
   return (
@@ -48,6 +59,7 @@ export function CreateGroupForm({
           placeholder="Ví dụ: Đà Lạt 3N2Đ"
           maxLength={80}
           autoComplete="off"
+          autoFocus={autoFocus}
           enterKeyHint="next"
           onKeyDown={(event) => {
             // Enter chuyển sang ô thành viên thay vì gửi form khi chưa nhập người nào.

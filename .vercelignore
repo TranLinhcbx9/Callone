@@ -1,0 +1,40 @@
+# Những thứ không được đưa lên Vercel khi chạy `npm run deploy`.
+# Vercel CLI không đọc .gitignore. Nó chỉ dùng danh sách mặc định của nó (.git, node_modules, .cache,
+# .env.local, .env.*.local...) cộng với file này, nên mọi thứ ở dưới phải ghi lại ở đây.
+#
+# Cẩn thận khi thêm dòng mới: `npm run build` chạy `tsc -b`, cần tsconfig*.json, src, e2e và playwright.config.ts.
+# Vercel tự cài gói từ package-lock.json và tự build, nên không cần đưa node_modules hay dist lên.
+
+# Cache và gói cài đặt (.cache chứa npm cache nhiều GB)
+.cache
+node_modules
+
+# Bản build ở máy
+/dist
+/dist-*
+
+# Kết quả chạy test
+/test-results
+/playwright-report
+/blob-report
+/coverage
+
+# Biến môi trường và khóa. Trên Vercel đặt biến bằng `npx vercel env add`, không đưa file lên.
+.env
+.env.*
+!.env.example
+*.local
+
+# Ảnh chụp thiết kế, nặng và không dùng khi build
+/docs/design/screenshots
+
+# Trạng thái liên kết cục bộ của Supabase CLI
+/supabase/.temp
+/supabase/.branches
+
+# Rác của trình soạn thảo, hệ điều hành và công cụ
+*.log
+*.tsbuildinfo
+.vscode
+.idea
+.DS_Store

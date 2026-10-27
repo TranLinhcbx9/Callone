@@ -9,6 +9,7 @@ lerna-debug.log*
 
 node_modules
 dist
+dist-e2e
 dist-ssr
 *.local
 
@@ -34,6 +35,9 @@ dist-ssr
 # Supabase CLI
 supabase/.temp
 supabase/.branches
+
+# Vercel CLI (vercel link tạo .vercel/project.json, chỉ có ở máy)
+.vercel
 
 # Playwright
 playwright-report

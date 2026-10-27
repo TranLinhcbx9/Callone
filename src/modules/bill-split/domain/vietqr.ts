@@ -8,6 +8,18 @@ import type { BankAccount } from '@/modules/bill-split/domain/types'
 
 const textEncoder = new TextEncoder()
 
+/**
+ * Số tiền lớn nhất đưa vào mã QR được, bằng giới hạn số tiền của hợp đồng. Số dư của cả nhóm có thể vượt mức này
+ * (mỗi khoản chi đã tới 999 tỷ), nhưng một mã QR thì không: buildVietQrPayload ném RangeError. Giao diện nên kiểm
+ * bằng isValidQrAmount hoặc dùng tryBuildTransferQr thay vì bắt lỗi.
+ */
+export const MAX_QR_AMOUNT = BS_LIMITS.maxAmount
+
+/** Số tiền có đưa vào mã QR được không: số nguyên từ 1 tới MAX_QR_AMOUNT. Không ném lỗi. */
+export function isValidQrAmount(amount: number): boolean {
+  return Number.isSafeInteger(amount) && amount >= BS_LIMITS.minAmount && amount <= MAX_QR_AMOUNT
+}
+
 /** CRC-16/CCITT-FALSE: đa thức 0x1021, khởi tạo 0xFFFF, không đảo bit, không xor cuối. Trả 4 ký tự hex viết hoa. */
 export function crc16Ccitt(text: string): string {
   let crc = 0xffff
@@ -41,8 +53,8 @@ export function buildVietQrPayload({ bin, accountNumber, amount, message }: Viet
   if (!/^[0-9A-Za-z]{1,19}$/.test(accountNumber)) throw new RangeError(`Số tài khoản không hợp lệ: ${accountNumber}`)
 
   const hasAmount = amount !== undefined && amount !== null
-  if (hasAmount && !(Number.isSafeInteger(amount) && amount >= BS_LIMITS.minAmount && amount <= BS_LIMITS.maxAmount)) {
-    throw new RangeError(`Số tiền phải là số nguyên từ ${BS_LIMITS.minAmount} tới ${BS_LIMITS.maxAmount}: ${amount}`)
+  if (hasAmount && !isValidQrAmount(amount)) {
+    throw new RangeError(`Số tiền phải là số nguyên từ ${BS_LIMITS.minAmount} tới ${MAX_QR_AMOUNT}: ${amount}`)
   }
   const hasMessage = message !== undefined && message !== null && message !== ''
   if (hasMessage && !/^[\x20-\x7e]{1,95}$/.test(message)) {
@@ -63,16 +75,19 @@ export function buildVietQrPayload({ bin, accountNumber, amount, message }: Viet
   return body + crc16Ccitt(body)
 }
 
+/** Chuỗi VietQR kèm nội dung chuyển khoản đã làm sạch, đúng thứ nằm trong mã. */
+export interface TransferQr {
+  payload: string
+  message: string
+}
+
 /**
  * Mã VietQR trả tiền cho một tài khoản ngân hàng, kèm nội dung chuyển khoản thực sự được mã hóa trong đó.
  * Nội dung được làm sạch (không dấu, chỉ chữ và số, tối đa 25 ký tự) nên truyền thẳng chữ tiếng Việt vào cũng được.
  * Hiện `message` cho người dùng thay vì chữ gốc, để thứ họ đọc đúng là thứ ngân hàng sẽ nhận.
+ * Ném RangeError khi đầu vào sai (số tiền ngoài 1 tới MAX_QR_AMOUNT, tài khoản sai dạng): giao diện dùng tryBuildTransferQr.
  */
-export function buildTransferQr(
-  bank: BankAccount,
-  amount: number,
-  message?: string,
-): { payload: string; message: string } {
+export function buildTransferQr(bank: BankAccount, amount: number, message?: string): TransferQr {
   const cleaned = toTransferMessage(message ?? '')
   const payload = buildVietQrPayload({
     bin: bank.bin,
@@ -81,6 +96,20 @@ export function buildTransferQr(
     message: cleaned === '' ? undefined : cleaned,
   })
   return { payload, message: cleaned }
+}
+
+/**
+ * Như buildTransferQr nhưng không ném lỗi: trả null khi đầu vào không dựng được mã (số tiền ngoài 1 tới MAX_QR_AMOUNT
+ * hoặc không nguyên, BIN không đủ 6 chữ số, số tài khoản sai dạng). Dành cho giao diện, để báo lỗi thay vì sập trang.
+ * Lỗi nào khác RangeError là lỗi lập trình nên vẫn được ném ra.
+ */
+export function tryBuildTransferQr(bank: BankAccount, amount: number, message?: string): TransferQr | null {
+  try {
+    return buildTransferQr(bank, amount, message)
+  } catch (error) {
+    if (error instanceof RangeError) return null
+    throw error
+  }
 }
 
 /** Chỉ chuỗi VietQR của buildTransferQr. Test e2e so mã trên màn hình với hàm này. */

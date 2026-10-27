@@ -5,7 +5,7 @@
 begin;
 set local search_path = public, extensions;
 
-select plan(41);
+select plan(48);
 
 -- Chạy một câu SQL bằng quyền của role hiện tại, trả null nếu thành công,
 -- nếu lỗi thì trả { state, message, detail } (detail được parse thành JSON nếu có thể).
@@ -59,8 +59,8 @@ select is(
 select is(
   (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace
     where n.nspname = 'bill_split' and c.relkind = 'r'),
-  5::bigint,
-  'bill_split có đúng 5 bảng'
+  7::bigint,
+  'bill_split có đúng 7 bảng (5 bảng dữ liệu, settings và create_log)'
 );
 
 select is(
@@ -119,6 +119,18 @@ select is(
   'bill_split không có policy nào (RLS chỉ làm lớp chặn dự phòng)'
 );
 
+select is(
+  (select count(*)
+     from pg_class c
+     join pg_namespace n on n.oid = c.relnamespace
+    cross join (values ('anon'), ('authenticated')) as r(role_name)
+    where n.nspname = 'bill_split'
+      and c.relkind = 'S'
+      and has_sequence_privilege(r.role_name, c.oid, 'usage,select,update')),
+  0::bigint,
+  'anon và authenticated không có quyền nào trên sequence của bill_split (create_log.id)'
+);
+
 set local role anon;
 
 select is(
@@ -126,7 +138,7 @@ select is(
   '42501',
   'anon không đọc được bill_split.' || t
 )
-from unnest(array['groups', 'members', 'expenses', 'expense_shares', 'settlements']) as t;
+from unnest(array['groups', 'members', 'expenses', 'expense_shares', 'settlements', 'settings', 'create_log']) as t;
 
 select is(
   pg_temp.err($$insert into bill_split.groups (name, token_hash) values ('x', sha256('x'::bytea))$$) ->> 'state',
@@ -135,6 +147,9 @@ select is(
 );
 select is(pg_temp.err($$update bill_split.groups set name = 'x'$$) ->> 'state', '42501', 'anon không sửa được bill_split.groups');
 select is(pg_temp.err($$delete from bill_split.members$$) ->> 'state', '42501', 'anon không xóa được bill_split.members');
+-- Hai bảng của giới hạn tốc độ: ghi được vào đây là gỡ được giới hạn tạo nhóm.
+select is(pg_temp.err($$update bill_split.settings set value = 1000000$$) ->> 'state', '42501', 'anon không sửa được bill_split.settings (không tự nâng giới hạn tạo nhóm)');
+select is(pg_temp.err($$delete from bill_split.create_log$$) ->> 'state', '42501', 'anon không xóa được bill_split.create_log (không tự xóa dấu vết tạo nhóm)');
 select is(pg_temp.err($$select bill_split.find_group('test-group-a-token-00001')$$) ->> 'state', '42501', 'anon không gọi được hàm nội bộ bill_split.find_group');
 select is(pg_temp.err($$select bill_split.build_snapshot(gen_random_uuid())$$) ->> 'state', '42501', 'anon không gọi được hàm nội bộ bill_split.build_snapshot');
 
@@ -145,7 +160,7 @@ select is(
   '42501',
   'authenticated không đọc được bill_split.' || t
 )
-from unnest(array['groups', 'members', 'expenses', 'expense_shares', 'settlements']) as t;
+from unnest(array['groups', 'members', 'expenses', 'expense_shares', 'settlements', 'settings', 'create_log']) as t;
 
 select is(pg_temp.err($$delete from bill_split.expenses$$) ->> 'state', '42501', 'authenticated không xóa được bill_split.expenses');
 select is(pg_temp.err($$select bill_split.lock_group('test-group-a-token-00001')$$) ->> 'state', '42501', 'authenticated không gọi được hàm nội bộ bill_split.lock_group');
@@ -269,7 +284,7 @@ select is(
   (select count(*)
      from pg_proc
     where pronamespace = 'bill_split'::regnamespace
-      and proname in ('find_group', 'build_snapshot', 'check_shares', 'fail', 'invalid', 'over_limit', 'clean', 'req_text', 'opt_text', 'hash_token')
+      and proname in ('find_group', 'build_snapshot', 'check_shares', 'fail', 'invalid', 'over_limit', 'clean', 'strip_blank', 'req_text', 'opt_text', 'hash_token', 'replay_create', 'client_key')
       and provolatile = 'v'),
   0::bigint,
   'các hàm nội bộ mà hàm stable gọi tới đều không phải volatile'

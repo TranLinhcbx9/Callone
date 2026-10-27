@@ -1,6 +1,6 @@
 -- Chia tiền: bs_save_expense và bs_delete_expense (hợp đồng mục 4, 5, 6, 7 và 9).
 -- Gồm: tổng phần chia (sum_mismatch), chia đều lệch quá 1 đồng (unequal_split), gửi lại cùng id
--- (idempotent), sửa theo version (BS_CONFLICT, BS_NOT_FOUND), giới hạn 5000 khoản chi, thứ tự snapshot.
+-- (idempotent), sửa theo version (BS_CONFLICT, BS_NOT_FOUND), giới hạn 1000 khoản chi, thứ tự snapshot.
 begin;
 set local search_path = public, extensions;
 
@@ -119,7 +119,7 @@ $$;
 -- ---------------------------------------------------------------------------
 -- Dữ liệu nền
 --   Nhóm A: An (101), Bình (102), Chi (103).   Nhóm B: Dũng (101), Em (102), có khoản chi b-201.
---   Nhóm D: 50 thành viên.   Nhóm E: 1 thành viên và đúng 5000 khoản chi (khoản e-201 có id cố định).
+--   Nhóm D: 50 thành viên.   Nhóm E: 1 thành viên và đúng 1000 khoản chi (khoản e-201 có id cố định).
 -- ---------------------------------------------------------------------------
 insert into bill_split.groups (id, name, token_hash) values
   (pg_temp.uid('a', 1), 'Nhóm A', sha256(convert_to('test-group-a-token-00001', 'UTF8'))),
@@ -144,7 +144,7 @@ insert into bill_split.expense_shares (expense_id, group_id, member_id, amount) 
 insert into bill_split.expenses (id, group_id, title, amount, paid_by, spent_on, split_mode)
 select case when g = 1 then pg_temp.uid('e', 201) else gen_random_uuid() end,
        pg_temp.uid('e', 1), 'Khoản chi ' || g, 1000, pg_temp.uid('e', 101), date '2026-10-24', 'exact'
-  from generate_series(1, 5000) g;
+  from generate_series(1, 1000) g;
 
 set local role anon;
 
@@ -481,23 +481,23 @@ select lives_ok(
 select is(pg_temp.exp(30) ->> 'version', '1', 'bs_save_expense: khoản chi được tạo lại có version 1');
 
 -- ---------------------------------------------------------------------------
--- Giới hạn 5000 khoản chi
+-- Giới hạn 1000 khoản chi
 -- ---------------------------------------------------------------------------
 select pg_temp.throws(
   $$select public.bs_save_expense('test-group-e-token-00001', gen_random_uuid(), 'Quá giới hạn', 1000, pg_temp.uid('e', 101), date '2026-10-24', 'exact',
       jsonb_build_array(jsonb_build_object('member_id', pg_temp.uid('e', 101), 'amount', 1000)))$$,
   'PT422', 'BS_LIMIT', '{"limit":"expenses"}',
-  'bs_save_expense: nhóm đã có 5000 khoản chi thì BS_LIMIT expenses'
+  'bs_save_expense: nhóm đã có 1000 khoản chi thì BS_LIMIT expenses'
 );
 select lives_ok(
   $$select public.bs_save_expense('test-group-e-token-00001', pg_temp.uid('e', 201), 'Sửa trong nhóm đầy', 1000, pg_temp.uid('e', 101), date '2026-10-24', 'exact',
       jsonb_build_array(jsonb_build_object('member_id', pg_temp.uid('e', 101), 'amount', 1000)), 1)$$,
-  'bs_save_expense: nhóm đủ 5000 khoản chi vẫn sửa được khoản có sẵn'
+  'bs_save_expense: nhóm đủ 1000 khoản chi vẫn sửa được khoản có sẵn'
 );
 select lives_ok(
   $$select public.bs_save_expense('test-group-e-token-00001', pg_temp.uid('e', 201), 'Gửi lại trong nhóm đầy', 1000, pg_temp.uid('e', 101), date '2026-10-24', 'exact',
       jsonb_build_array(jsonb_build_object('member_id', pg_temp.uid('e', 101), 'amount', 1000)))$$,
-  'bs_save_expense: nhóm đủ 5000 khoản chi vẫn nhận lời gửi lại của khoản có sẵn'
+  'bs_save_expense: nhóm đủ 1000 khoản chi vẫn nhận lời gửi lại của khoản có sẵn'
 );
 select lives_ok($$select public.bs_delete_expense('test-group-e-token-00001', pg_temp.uid('e', 201))$$, 'bs_delete_expense: xóa một khoản trong nhóm đầy');
 select lives_ok(
@@ -506,7 +506,7 @@ select lives_ok(
   'bs_save_expense: xóa bớt thì thêm được lại'
 );
 reset role;
-select is((select count(*) from bill_split.expenses e where e.group_id = pg_temp.uid('e', 1)), 5000::bigint, 'giới hạn khoản chi: nhóm E giữ đúng 5000 khoản');
+select is((select count(*) from bill_split.expenses e where e.group_id = pg_temp.uid('e', 1)), 1000::bigint, 'giới hạn khoản chi: nhóm E giữ đúng 1000 khoản');
 set local role anon;
 
 -- ---------------------------------------------------------------------------

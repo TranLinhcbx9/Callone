@@ -1,4 +1,4 @@
-// TẠM THỜI VIẾT TAY theo docs/contracts/bill-split-api.md để frontend code song song với database.
+// TẠM THỜI VIẾT TAY theo docs/contracts/bill-split-api.md (phiên bản 1.1) để frontend code song song với database.
 // Agent supabase sẽ thay file này bằng bản sinh tự động: npm run db:types
 // Bản sinh tự động phải tương đương về Args và Returns của từng hàm.
 
@@ -14,7 +14,7 @@ export type Database = {
     }
     Functions: {
       bs_create_group: {
-        Args: { p_member_names: string[]; p_name: string }
+        Args: { p_member_names: string[]; p_name: string; p_token?: string }
         Returns: Json
       }
       bs_delete_expense: {
@@ -42,7 +42,7 @@ export type Database = {
         Returns: Json
       }
       bs_rotate_token: {
-        Args: { p_token: string }
+        Args: { p_new_token?: string; p_token: string }
         Returns: Json
       }
       bs_save_expense: {

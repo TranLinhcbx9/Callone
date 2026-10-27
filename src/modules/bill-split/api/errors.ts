@@ -18,11 +18,11 @@ import { formatNumber } from '@/shared/lib/format'
 export const BILL_SPLIT_ERROR_MESSAGES: Readonly<Record<BsErrorCode, string>> = {
   BS_GROUP_NOT_FOUND: 'Không tìm thấy nhóm. Link có thể đã được đổi hoặc nhóm đã bị xóa.',
   BS_NOT_FOUND: 'Dữ liệu này không còn nữa. Có thể người khác vừa xóa.',
-  BS_CONFLICT: 'Có người vừa sửa khoản chi này. Tải lại để xem bản mới nhất.',
+  BS_CONFLICT: 'Người khác vừa sửa khoản chi này. Tải lại rồi thử lại.',
   BS_MEMBER_IN_USE: 'Thành viên này đã có khoản chi hoặc lần trả nợ nên không xóa được.',
   BS_INVALID: 'Dữ liệu chưa hợp lệ. Kiểm tra lại rồi thử lần nữa.',
   BS_LIMIT: 'Nhóm đã vượt giới hạn cho phép.',
-  BS_RATE_LIMITED: 'Đang có quá nhiều nhóm mới được tạo. Thử lại sau ít phút.',
+  BS_RATE_LIMITED: 'Tạo nhóm hơi nhiều, thử lại sau ít phút.',
 }
 
 const LIMIT_MESSAGES: Readonly<Record<BsLimitDetail['limit'], string>> = {
@@ -49,6 +49,8 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   to_member: 'Người nhận',
   settled_on: 'Ngày trả',
   tokens: 'Danh sách nhóm',
+  token: 'Link nhóm',
+  new_token: 'Link mới',
   member_id: 'Thành viên',
   expense_id: 'Khoản chi',
   settlement_id: 'Lần trả nợ',
@@ -97,6 +99,11 @@ const INVALID_OVERRIDES: Readonly<Record<string, string>> = {
   'bank_account:format': `Số tài khoản chỉ gồm chữ và số, tối đa ${BS_LIMITS.bankAccount} ký tự.`,
   'bank_account_name:too_long': `Tên chủ tài khoản tối đa ${BS_LIMITS.bankAccountName} ký tự.`,
   'tokens:too_many': `Chỉ xem được tối đa ${BS_LIMITS.tokensPerLookup} nhóm cùng lúc.`,
+  // Hợp đồng v1.1: token do client chọn. Chỉ xảy ra khi client có lỗi hoặc trùng token (gần như không thể), nên một câu chung.
+  'token:format': 'Không tạo được link nhóm, thử lại nhé.',
+  'token:id_taken': 'Không tạo được link nhóm, thử lại nhé.',
+  'new_token:format': 'Không đổi được link, thử lại nhé.',
+  'new_token:id_taken': 'Không đổi được link, thử lại nhé.',
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -1,5 +1,7 @@
 import { PlusIcon } from 'lucide-react'
+import { bankDisplayName } from '@/modules/bill-split/domain/banks'
 import type { Bank, Member } from '@/modules/bill-split/domain/types'
+import { EmptyState } from '@/shared/ui/EmptyState'
 import { ListGroup, ListRow } from '@/shared/ui/ListRow'
 import { MemberAvatar } from '@/shared/ui/MemberAvatar'
 import { Badge } from '@/shared/ui/badge'
@@ -21,9 +23,8 @@ export interface MemberListProps {
 
 function bankSummary(member: Member, banks?: readonly Bank[]): string {
   if (!member.bank) return 'Chưa nhập tài khoản'
-  const bank = banks?.find((item) => item.bin === member.bank?.bin)
   const tail = member.bank.accountNumber.slice(-4)
-  return `${bank?.shortName ?? `Ngân hàng ${member.bank.bin}`} · ••••${tail}`
+  return `${bankDisplayName(member.bank.bin, banks)} · ••••${tail}`
 }
 
 /** Danh sách thành viên với tóm tắt tài khoản ngân hàng (nếu có), nút thêm người và dòng "Bạn là ...". */
@@ -41,23 +42,29 @@ export function MemberList({ members, banks, meId, onEdit, onAdd, onChangeMe, ca
           </Button>
         </div>
       )}
-      <ListGroup>
-        {members.map((member) => (
-          <ListRow
-            key={member.id}
-            leading={<MemberAvatar name={member.name} colorKey={member.id} />}
-            title={
-              <span className="flex items-center gap-2">
-                <span className="truncate">{member.name}</span>
-                {member.id === meId && <Badge variant="soft">Bạn</Badge>}
-              </span>
-            }
-            subtitle={bankSummary(member, banks)}
-            chevron={Boolean(onEdit)}
-            onClick={onEdit ? () => onEdit(member) : undefined}
-          />
-        ))}
-      </ListGroup>
+      {members.length === 0 ? (
+        <div className="rounded-xl border border-border bg-card shadow-xs">
+          <EmptyState compact title="Chưa có thành viên nào" description="Thêm người đầu tiên để bắt đầu chia tiền." />
+        </div>
+      ) : (
+        <ListGroup>
+          {members.map((member) => (
+            <ListRow
+              key={member.id}
+              leading={<MemberAvatar name={member.name} colorKey={member.id} />}
+              title={
+                <span className="flex items-center gap-2">
+                  <span className="truncate">{member.name}</span>
+                  {member.id === meId && <Badge variant="soft">Bạn</Badge>}
+                </span>
+              }
+              subtitle={bankSummary(member, banks)}
+              chevron={Boolean(onEdit)}
+              onClick={onEdit ? () => onEdit(member) : undefined}
+            />
+          ))}
+        </ListGroup>
+      )}
       {onAdd && canAdd && (
         <button
           type="button"

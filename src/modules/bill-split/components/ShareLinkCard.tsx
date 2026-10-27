@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { LinkIcon, RefreshCwIcon, ShareIcon } from 'lucide-react'
 import { CopyButton } from '@/shared/ui/CopyButton'
 import { Spinner } from '@/shared/ui/Spinner'
@@ -23,11 +23,14 @@ export interface ShareLinkCardProps {
   isRotating?: boolean
   /** Ép hiện hoặc ẩn nút Chia sẻ. Mặc định hiện khi trình duyệt có navigator.share (điện thoại). */
   canShare?: boolean
+  /** Gọi sau khi sao chép link thành công (nơi gọi hiện toast "Đã chép link"). */
+  onCopied?: () => void
 }
 
 /** Thẻ chia sẻ nhóm: link, nút Chia sẻ (hộp chia sẻ của điện thoại), sao chép, và đổi link có xác nhận. */
-export function ShareLinkCard({ url, groupName, onRotate, isRotating, canShare }: ShareLinkCardProps) {
+export function ShareLinkCard({ url, groupName, onRotate, isRotating, canShare, onCopied }: ShareLinkCardProps) {
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const rotateButtonRef = useRef<HTMLButtonElement>(null)
   const nativeShare = canShare ?? (typeof navigator !== 'undefined' && typeof navigator.share === 'function')
 
   async function share() {
@@ -56,7 +59,7 @@ export function ShareLinkCard({ url, groupName, onRotate, isRotating, canShare }
         <span className="tnum min-w-0 flex-1 truncate text-small text-muted-foreground" title={url}>
           {url}
         </span>
-        <CopyButton iconOnly value={url} label="Sao chép link" variant="ghost" size="icon-sm" />
+        <CopyButton iconOnly value={url} label="Sao chép link" variant="ghost" size="icon-sm" onCopied={onCopied} />
       </div>
 
       <div className="mt-3 flex gap-2">
@@ -66,13 +69,21 @@ export function ShareLinkCard({ url, groupName, onRotate, isRotating, canShare }
             Chia sẻ
           </Button>
         )}
-        <CopyButton value={url} label="Sao chép link" size="default" variant={nativeShare ? 'outline' : 'default'} className="flex-1" />
+        <CopyButton
+          value={url}
+          label="Sao chép link"
+          size="default"
+          variant={nativeShare ? 'outline' : 'default'}
+          className="flex-1"
+          onCopied={onCopied}
+        />
       </div>
 
       {onRotate && (
         <>
           <div className="my-4 h-px bg-border" />
           <button
+            ref={rotateButtonRef}
             type="button"
             onClick={() => setConfirmOpen(true)}
             disabled={isRotating}
@@ -82,7 +93,13 @@ export function ShareLinkCard({ url, groupName, onRotate, isRotating, canShare }
             Đổi link mới
           </button>
           <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-            <AlertDialogContent>
+            {/* Hộp xác nhận không có nút kích hoạt theo kiểu Radix, nên tự đưa con trỏ về nút "Đổi link mới" khi đóng. */}
+            <AlertDialogContent
+              onCloseAutoFocus={(event) => {
+                event.preventDefault()
+                rotateButtonRef.current?.focus({ preventScroll: true })
+              }}
+            >
               <AlertDialogHeader>
                 <AlertDialogTitle>Đổi link mới?</AlertDialogTitle>
                 <AlertDialogDescription>

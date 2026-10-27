@@ -1,3 +1,5 @@
+/// <reference types="vite-plugin-pwa/vanillajs" />
+
 declare global {
   interface ImportMetaEnv {
     readonly VITE_SUPABASE_URL?: string

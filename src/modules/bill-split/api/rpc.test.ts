@@ -1,6 +1,7 @@
 // expect(giá trị, thông điệp) là cú pháp hợp lệ của Vitest, còn rule valid-expect của plugin chỉ biết Jest.
 /* oxlint-disable vitest/valid-expect */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { TOKEN_PATTERN } from '@/modules/bill-split/api/contract'
 import type { ExpenseInput, MemberInput, SettlementInput } from '@/modules/bill-split/domain/inputs'
 import { AppError } from '@/shared/lib/errors'
 
@@ -20,6 +21,24 @@ const SNAPSHOT = {
   members: [{ id: ID, name: 'Linh', position: 0, bank_bin: null, bank_account: null, bank_account_name: null }],
   expenses: [],
   settlements: [],
+}
+
+/** Token giả hợp lệ (24 ký tự) theo chỉ số. */
+const tokenOf = (index: number) => `tok-${String(index).padStart(3, '0')}-`.padEnd(24, 'x')
+
+/** Mốc thời gian tăng dần theo chỉ số giảm: chỉ số 0 muộn nhất. */
+const minuteOf = (index: number) => new Date(Date.UTC(2026, 9, 27, 12, 0, 0) - index * 60_000).toISOString()
+
+function summaryRow(token: string, updatedAt: string) {
+  return {
+    token,
+    id: `id-${token}`,
+    name: `Nhóm ${token}`,
+    member_count: 3,
+    expense_count: 2,
+    total_spent: 1_000_000,
+    updated_at: updatedAt,
+  }
 }
 
 function respond(data: unknown) {
@@ -57,16 +76,60 @@ beforeEach(() => {
 })
 
 describe('tham số gửi lên', () => {
-  it('bs_create_group: cắt khoảng trắng tên nhóm và tên thành viên', async () => {
+  it('bs_create_group: cắt khoảng trắng tên nhóm và tên thành viên, gửi token do client chọn', async () => {
     respond({ token: TOKEN, snapshot: SNAPSHOT })
-    const result = await api.createGroup({ name: '  Đà Lạt  ', memberNames: [' Linh ', 'Hưng'] })
+    const result = await api.createGroup({ name: '  Đà Lạt  ', memberNames: [' Linh ', 'Hưng'], token: TOKEN })
     expect(lastCall()).toEqual({
       name: 'bs_create_group',
-      args: { p_name: 'Đà Lạt', p_member_names: ['Linh', 'Hưng'] },
+      args: { p_name: 'Đà Lạt', p_member_names: ['Linh', 'Hưng'], p_token: TOKEN },
       argCount: 2,
     })
     expect(result.token).toBe(TOKEN)
     expect(result.group.name).toBe('Đà Lạt')
+  })
+
+  it('bs_create_group: không có token thì rpc tự sinh một token mới hợp lệ cho mỗi lần gọi, và dùng token server trả về', async () => {
+    const tokens: string[] = []
+    for (let i = 0; i < 3; i++) {
+      respond({ token: TOKEN, snapshot: SNAPSHOT })
+      const result = await api.createGroup({ name: 'Đà Lạt', memberNames: ['Linh'] })
+      const { args } = lastCall()
+      expect(Object.keys(args)).toEqual(['p_name', 'p_member_names', 'p_token'])
+      expect(args.p_token).toMatch(TOKEN_PATTERN)
+      tokens.push(args.p_token as string)
+      expect(result.token).toBe(TOKEN)
+    }
+    expect(new Set(tokens).size).toBe(3)
+  })
+
+  it('bs_create_group: token rỗng coi như không có', async () => {
+    respond({ token: TOKEN, snapshot: SNAPSHOT })
+    await api.createGroup({ name: 'Đà Lạt', memberNames: ['Linh'], token: '' })
+    expect(lastCall().args.p_token).toMatch(TOKEN_PATTERN)
+  })
+
+  it('bs_create_group: gửi lại cùng token (replay) nhận lại đúng nhóm đã tạo, kể cả khi nội dung gửi lại khác', async () => {
+    respond({ token: TOKEN, snapshot: SNAPSHOT })
+    const first = await api.createGroup({ name: 'Đà Lạt', memberNames: ['Linh'], token: TOKEN })
+    // Server trả nhóm cũ cho p_token đã có, bỏ qua tên và thành viên mới.
+    respond({ token: TOKEN, snapshot: SNAPSHOT })
+    const replay = await api.createGroup({ name: 'Tên khác', memberNames: ['Hưng', 'Mai'], token: TOKEN })
+    expect(replay).toEqual(first)
+    expect(lastCall().args.p_token).toBe(TOKEN)
+  })
+
+  it('bs_create_group: BS_INVALID token/id_taken và BS_RATE_LIMITED báo thẳng lên', async () => {
+    respondError({ code: 'PT422', message: 'BS_INVALID', details: '{"field":"token","reason":"id_taken"}', hint: null }, 422)
+    expect(await api.createGroup({ name: 'A', memberNames: ['B'], token: TOKEN }).catch((e: unknown) => e)).toMatchObject({
+      code: 'BS_INVALID',
+      status: 422,
+      detail: { field: 'token', reason: 'id_taken' },
+    })
+    respondError({ code: 'PT429', message: 'BS_RATE_LIMITED', details: '', hint: null }, 429)
+    expect(await api.createGroup({ name: 'A', memberNames: ['B'], token: TOKEN }).catch((e: unknown) => e)).toMatchObject({
+      code: 'BS_RATE_LIMITED',
+      status: 429,
+    })
   })
 
   it('bs_get_group, bs_update_group, bs_delete_member, bs_delete_expense, bs_delete_settlement', async () => {
@@ -87,23 +150,107 @@ describe('tham số gửi lên', () => {
     })
   })
 
-  it('bs_get_groups: bỏ token trùng, tối đa 50, không gọi khi rỗng', async () => {
+  it('bs_get_groups: bỏ token trùng, không gọi khi rỗng, một lô khi không quá 50 token', async () => {
     expect(await api.getGroupSummaries([])).toEqual([])
     expect(rpc).not.toHaveBeenCalled()
 
     respond([])
-    const many = Array.from({ length: 70 }, (_, i) => `token-${String(i).padStart(2, '0')}-xxxxxxxxxxxxx`)
-    await api.getGroupSummaries([...many, many[0] as string])
+    const tokens = Array.from({ length: 50 }, (_, i) => tokenOf(i))
+    expect(await api.getGroupSummaries([...tokens, tokens[0] as string, tokens[49] as string])).toEqual([])
+    expect(rpc).toHaveBeenCalledTimes(1)
     const { name, args } = lastCall()
     expect(name).toBe('bs_get_groups')
-    expect(args.p_tokens).toEqual(many.slice(0, 50))
+    expect(args.p_tokens).toEqual(tokens)
   })
 
-  it('bs_rotate_token trả token mới, bs_delete_group trả undefined', async () => {
-    respond({ token: 'abcdefghijklmnopqrstuvwx' })
-    expect(await api.rotateToken(TOKEN)).toBe('abcdefghijklmnopqrstuvwx')
-    expect(lastCall()).toEqual({ name: 'bs_rotate_token', args: { p_token: TOKEN }, argCount: 2 })
+  it('bs_get_groups: chia lô 50 token để truyền bao nhiêu token cũng được, không token nào bị cắt', async () => {
+    const tokens = Array.from({ length: 120 }, (_, i) => tokenOf(i))
+    // Giả server: trả về tóm tắt của đúng các token trong lô, cập nhật càng muộn khi chỉ số càng nhỏ.
+    rpc.mockImplementation(async (_name: string, args: object) => {
+      const batch = (args as { p_tokens: string[] }).p_tokens
+      const rows = batch
+        .map((token) => summaryRow(token, minuteOf(tokens.indexOf(token))))
+        .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))
+      return { data: rows, error: null, status: 200 }
+    })
 
+    const result = await api.getGroupSummaries(tokens)
+
+    expect(rpc.mock.calls.map(([, args]) => (args as { p_tokens: string[] }).p_tokens.length)).toEqual([50, 50, 20])
+    expect(rpc.mock.calls.flatMap(([, args]) => (args as { p_tokens: string[] }).p_tokens)).toEqual(tokens)
+    expect(result).toHaveLength(120)
+    expect(new Set(result.map((item) => item.token)).size).toBe(120)
+    // Gộp lại rồi sắp mới cập nhật trước trên cả 3 lô: chỉ số nhỏ nhất (cập nhật muộn nhất) đứng đầu.
+    expect(result.map((item) => item.token)).toEqual(tokens)
+  })
+
+  it('bs_get_groups: gộp lô sắp theo thời gian chính xác tới micro giây', async () => {
+    const tokens = Array.from({ length: 60 }, (_, i) => tokenOf(i))
+    const stamps: Record<string, string> = {
+      [tokens[0] as string]: '2026-10-27T13:28:38.123456+00:00',
+      [tokens[55] as string]: '2026-10-27T13:28:38.123457+00:00',
+    }
+    rpc.mockImplementation(async (_name: string, args: object) => {
+      const batch = (args as { p_tokens: string[] }).p_tokens
+      const rows = batch.map((token) => summaryRow(token, stamps[token] ?? '2026-01-01T00:00:00+00:00'))
+      return { data: rows, error: null, status: 200 }
+    })
+    const result = await api.getGroupSummaries(tokens)
+    expect(result.slice(0, 2).map((item) => item.token)).toEqual([tokens[55], tokens[0]])
+  })
+
+  it('bs_get_groups: một lô lỗi thì cả lượt lỗi, không trả kết quả thiếu', async () => {
+    const tokens = Array.from({ length: 80 }, (_, i) => tokenOf(i))
+    respond([summaryRow(tokenOf(0), minuteOf(0))])
+    respondError({ message: 'TypeError: Failed to fetch', details: '', hint: '', code: '' }, 0)
+    expect(await api.getGroupSummaries(tokens).catch((e: unknown) => e)).toMatchObject({ kind: 'network' })
+  })
+
+  it('bs_rotate_token: gửi p_new_token do client chọn, không gửi khi bỏ trống, trả token server xác nhận', async () => {
+    const fresh = 'abcdefghijklmnopqrstuvwx'
+    respond({ token: fresh })
+    expect(await api.rotateToken(TOKEN, fresh)).toBe(fresh)
+    expect(lastCall()).toEqual({
+      name: 'bs_rotate_token',
+      args: { p_token: TOKEN, p_new_token: fresh },
+      argCount: 2,
+    })
+
+    respond({ token: fresh })
+    expect(await api.rotateToken(TOKEN)).toBe(fresh)
+    expect(lastCall()).toEqual({ name: 'bs_rotate_token', args: { p_token: TOKEN }, argCount: 2 })
+    expect('p_new_token' in lastCall().args).toBe(false)
+  })
+
+  it('bs_rotate_token: gửi lại đúng cặp (replay) nhận lại cùng token mới; cả hai cùng không còn thì BS_GROUP_NOT_FOUND', async () => {
+    const fresh = 'abcdefghijklmnopqrstuvwx'
+    respond({ token: fresh })
+    respond({ token: fresh })
+    expect(await api.rotateToken(TOKEN, fresh)).toBe(fresh)
+    expect(await api.rotateToken(TOKEN, fresh)).toBe(fresh)
+    expect(rpc.mock.calls.map(([, args]) => args)).toEqual([
+      { p_token: TOKEN, p_new_token: fresh },
+      { p_token: TOKEN, p_new_token: fresh },
+    ])
+
+    respondError({ code: 'PT404', message: 'BS_GROUP_NOT_FOUND', details: '', hint: null }, 404)
+    expect(await api.rotateToken(TOKEN, 'zyxwvutsrqponmlkjihgfedc').catch((e: unknown) => e)).toMatchObject({
+      code: 'BS_GROUP_NOT_FOUND',
+      status: 404,
+    })
+    respondError({ code: 'PT422', message: 'BS_INVALID', details: '{"field":"new_token","reason":"id_taken"}', hint: null }, 422)
+    expect(await api.rotateToken(TOKEN, fresh).catch((e: unknown) => e)).toMatchObject({
+      code: 'BS_INVALID',
+      detail: { field: 'new_token', reason: 'id_taken' },
+    })
+  })
+
+  it('bs_rotate_token: server trả token sai dạng thì báo lỗi dữ liệu, không để lọt', async () => {
+    respond({ token: 'ngan' })
+    expect(await api.rotateToken(TOKEN, 'abcdefghijklmnopqrstuvwx').catch((e: unknown) => e)).toMatchObject({ kind: 'unknown' })
+  })
+
+  it('bs_delete_group trả undefined', async () => {
     respond(null)
     expect(await api.deleteGroup(TOKEN)).toBeUndefined()
     expect(lastCall()).toEqual({ name: 'bs_delete_group', args: { p_token: TOKEN }, argCount: 2 })
@@ -132,6 +279,13 @@ describe('bs_save_member: không gửi tham số tùy chọn khi rỗng', () => 
       p_bank_account: '0123456789',
       p_bank_account_name: 'NGUYEN VAN LINH',
     })
+  })
+
+  it('số tài khoản dán từ app ngân hàng có NBSP và ký tự vô hình: gửi lên đã sạch, giống thứ được nhớ lại', async () => {
+    respond(SNAPSHOT)
+    const junk = String.fromCodePoint(0xa0, 0x200b, 0x200e, 0x2060, 0xfeff)
+    await api.saveMember(TOKEN, member({ bank: { bin: '970436', accountNumber: `0123${junk}456 789${junk}`, accountName: null } }))
+    expect(lastCall().args).toMatchObject({ p_bank_bin: '970436', p_bank_account: '0123456789' })
   })
 
   it('có ngân hàng nhưng tên chủ tài khoản trống: không gửi p_bank_account_name', async () => {

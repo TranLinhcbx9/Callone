@@ -108,7 +108,7 @@ $$;
 -- ---------------------------------------------------------------------------
 -- Dữ liệu nền
 --   Nhóm A: An (101), Bình (102), Chi (103).   Nhóm B: Dũng (101), Em (102), có thanh toán b-301.
---   Nhóm E: 2 thành viên và đúng 5000 thanh toán (thanh toán e-301 có id cố định).
+--   Nhóm E: 2 thành viên và đúng 1000 thanh toán (thanh toán e-301 có id cố định).
 -- ---------------------------------------------------------------------------
 insert into bill_split.groups (id, name, token_hash) values
   (pg_temp.uid('a', 1), 'Nhóm A', sha256(convert_to('test-group-a-token-00001', 'UTF8'))),
@@ -127,7 +127,7 @@ insert into bill_split.settlements (id, group_id, from_member, to_member, amount
 insert into bill_split.settlements (id, group_id, from_member, to_member, amount, settled_on)
 select case when g = 1 then pg_temp.uid('e', 301) else gen_random_uuid() end,
        pg_temp.uid('e', 1), pg_temp.uid('e', 101), pg_temp.uid('e', 102), 1000, date '2026-10-25'
-  from generate_series(1, 5000) g;
+  from generate_series(1, 1000) g;
 
 set local role anon;
 
@@ -255,7 +255,7 @@ select lives_ok($$select pg_temp.pay(14, 1, 2, 1000, date '2026-10-26', repeat('
 select is(pg_temp.pmt(9), null::jsonb, 'bs_save_settlement: các lời gọi bị từ chối không để lại bản ghi nào');
 
 -- ---------------------------------------------------------------------------
--- Id đã thuộc nhóm khác, giới hạn 5000
+-- Id đã thuộc nhóm khác, giới hạn 1000
 -- ---------------------------------------------------------------------------
 select pg_temp.invalid(
   $$select public.bs_save_settlement(pg_temp.ta(), pg_temp.uid('b', 301), pg_temp.uid('a', 101), pg_temp.uid('a', 102), 1000, date '2026-10-26')$$,
@@ -269,11 +269,11 @@ select is(
 select pg_temp.throws(
   $$select public.bs_save_settlement('test-group-e-token-00001', gen_random_uuid(), pg_temp.uid('e', 101), pg_temp.uid('e', 102), 1000, date '2026-10-26')$$,
   'PT422', 'BS_LIMIT', '{"limit":"settlements"}',
-  'bs_save_settlement: nhóm đã có 5000 thanh toán thì BS_LIMIT settlements'
+  'bs_save_settlement: nhóm đã có 1000 thanh toán thì BS_LIMIT settlements'
 );
 select lives_ok(
   $$select public.bs_save_settlement('test-group-e-token-00001', pg_temp.uid('e', 301), pg_temp.uid('e', 102), pg_temp.uid('e', 101), 2000, date '2026-10-26')$$,
-  'bs_save_settlement: nhóm đủ 5000 thanh toán vẫn ghi đè được thanh toán có sẵn'
+  'bs_save_settlement: nhóm đủ 1000 thanh toán vẫn ghi đè được thanh toán có sẵn'
 );
 select lives_ok($$select public.bs_delete_settlement('test-group-e-token-00001', pg_temp.uid('e', 301))$$, 'bs_delete_settlement: xóa một thanh toán trong nhóm đầy');
 select lives_ok(
@@ -281,7 +281,7 @@ select lives_ok(
   'bs_save_settlement: xóa bớt thì thêm được lại'
 );
 reset role;
-select is((select count(*) from bill_split.settlements s where s.group_id = pg_temp.uid('e', 1)), 5000::bigint, 'giới hạn thanh toán: nhóm E giữ đúng 5000 thanh toán');
+select is((select count(*) from bill_split.settlements s where s.group_id = pg_temp.uid('e', 1)), 1000::bigint, 'giới hạn thanh toán: nhóm E giữ đúng 1000 thanh toán');
 set local role anon;
 
 -- ---------------------------------------------------------------------------

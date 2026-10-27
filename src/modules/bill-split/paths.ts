@@ -15,6 +15,23 @@ export const billSplitPaths = {
     `${billSplitPaths.group(token)}/expense/${encodeURIComponent(expenseId)}`,
 }
 
+/** Giá trị của tham số ?tab= trên trang nhóm, theo từng phần của trang. "chi-tieu" là mặc định và không cần ghi ra URL. */
+export const GROUP_TAB_PARAMS = { expenses: 'chi-tieu', balances: 'so-du', members: 'thanh-vien' } as const
+
+export type GroupTab = keyof typeof GROUP_TAB_PARAMS
+
+/** Đọc ?tab= thành phần của trang nhóm. Thiếu hoặc lạ thì về Chi tiêu. */
+export function parseGroupTab(value: string | null | undefined): GroupTab {
+  const found = (Object.keys(GROUP_TAB_PARAMS) as GroupTab[]).find((tab) => GROUP_TAB_PARAMS[tab] === value)
+  return found ?? 'expenses'
+}
+
+/** Đường dẫn trang nhóm mở sẵn một phần, ví dụ sau khi đổi link nhóm thì mở lại tab Thành viên. */
+export function groupTabPath(token: string, tab: GroupTab): string {
+  const base = billSplitPaths.group(token)
+  return tab === 'expenses' ? base : `${base}?tab=${GROUP_TAB_PARAMS[tab]}`
+}
+
 /** Link đầy đủ để chia sẻ cho bạn bè, ví dụ groupLink(window.location.origin, token). */
 export function groupLink(origin: string, token: string): string {
   return `${origin.replace(/\/+$/, '')}${billSplitPaths.group(token)}`

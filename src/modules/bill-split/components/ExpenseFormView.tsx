@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { Trash2Icon } from 'lucide-react'
 import { ExpenseSplitSection } from '@/modules/bill-split/components/ExpenseSplitSection'
 import { moneyErrorMessage } from '@/modules/bill-split/components/messages'
+import { isValidBillDate } from '@/modules/bill-split/domain/draft'
 import type { ExpenseDraft, Member, SplitPreview } from '@/modules/bill-split/domain/types'
 import { relativeDayLabel, todayIsoDate } from '@/shared/lib/date'
 import { formatVnd } from '@/shared/lib/format'
@@ -59,6 +60,8 @@ export function ExpenseFormView({
     !amount.ok && (showIssues || (amountTouched && amount.error !== 'empty')) ? moneyErrorMessage(amount.error) : null
   const amountPreview = amount.ok && draft.amountText.trim() !== '' ? `= ${formatVnd(amount.value)}` : null
   const dayLabel = relativeDayLabel(draft.spentOn, today)
+  // Ô ngày không có lỗi trong SplitIssue, nên tự kiểm: bộ chọn ngày của máy cho gõ năm ngoài khoảng database nhận (2000 đến 2100).
+  const dateError = isValidBillDate(draft.spentOn) ? undefined : 'Ngày chi phải nằm trong khoảng năm 2000 tới 2100.'
 
   function submit(event: FormEvent) {
     event.preventDefault()
@@ -132,13 +135,16 @@ export function ExpenseFormView({
         </div>
       </Field>
 
-      <Field label="Ngày" htmlFor="expense-date">
+      <Field label="Ngày" htmlFor="expense-date" error={dateError}>
         <div className="flex items-center gap-3">
           <Input
             id="expense-date"
             type="date"
+            min="2000-01-01"
+            max="2100-12-31"
             value={draft.spentOn}
             onChange={(event) => event.target.value && onChange({ spentOn: event.target.value })}
+            aria-invalid={dateError ? true : undefined}
             className="min-w-0 flex-1"
           />
           {dayLabel && <Badge variant="soft">{dayLabel}</Badge>}

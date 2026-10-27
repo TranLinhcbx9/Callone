@@ -10,6 +10,16 @@
 --   Lẩu thứ Sáu   : lau-thu-sau-demo-token-1
 
 -- ---------------------------------------------------------------------------
+-- Giới hạn tạo nhóm: nâng rất cao ở local. Qua Kong mọi request local đến từ cùng một IP nên với mặc định
+-- (5 lần mỗi client, 100 lần toàn hệ thống trong 10 phút) các lần chạy e2e và test tích hợp sẽ nhanh chóng
+-- bị BS_RATE_LIMITED. Seed không chạy trên cloud nên production vẫn dùng mặc định trong code.
+-- ---------------------------------------------------------------------------
+insert into bill_split.settings (key, value)
+values
+  ('create_limit_client', 1000000),
+  ('create_limit_global', 1000000);
+
+-- ---------------------------------------------------------------------------
 -- Nhóm 1: Đà Lạt 3N2Đ (4 người, 6 khoản chi, 1 lần trả nợ)
 -- ---------------------------------------------------------------------------
 insert into bill_split.groups (id, name, token_hash, created_at, updated_at)

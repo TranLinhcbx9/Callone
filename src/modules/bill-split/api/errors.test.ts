@@ -51,6 +51,8 @@ const FIELDS = [
   'to_member',
   'settled_on',
   'tokens',
+  'token',
+  'new_token',
   'member_id',
   'expense_id',
   'settlement_id',
@@ -75,8 +77,8 @@ describe('getBillSplitErrorMessage: mã lỗi hợp đồng', () => {
   it('BS_LIMIT: nói rõ giới hạn nào', () => {
     const message = (limit: unknown) => getBillSplitErrorMessage(postgrestError('BS_LIMIT', { limit }))
     expect(message('members')).toBe('Nhóm đã đủ 50 thành viên.')
-    expect(message('expenses')).toMatch(/^Nhóm đã đạt tối đa 5\.000 khoản chi\.$/)
-    expect(message('settlements')).toMatch(/^Nhóm đã đạt tối đa 5\.000 lần trả nợ\.$/)
+    expect(message('expenses')).toMatch(/^Nhóm đã đạt tối đa 1\.000 khoản chi\.$/)
+    expect(message('settlements')).toMatch(/^Nhóm đã đạt tối đa 1\.000 lần trả nợ\.$/)
     expect(message('lạ')).toBe(BILL_SPLIT_ERROR_MESSAGES.BS_LIMIT)
     expect(message(undefined)).toBe(BILL_SPLIT_ERROR_MESSAGES.BS_LIMIT)
   })
@@ -109,6 +111,16 @@ describe('getBillSplitErrorMessage: BS_INVALID', () => {
     expect(message('amount', 'out_of_range')).toContain('999 tỷ')
     expect(message('note', 'too_long')).toBe('Ghi chú quá dài.')
     expect(message('expense_id', 'id_taken')).toContain('Thử lại')
+  })
+
+  it('token do client chọn (hợp đồng v1.1): câu chung, không rơi vào câu mặc định khó hiểu', () => {
+    for (const reason of ['format', 'id_taken']) {
+      expect(message('token', reason), `token:${reason}`).toBe('Không tạo được link nhóm, thử lại nhé.')
+      expect(message('new_token', reason), `new_token:${reason}`).toBe('Không đổi được link, thử lại nhé.')
+    }
+    // Lý do khác vẫn gọi đúng tên trường thay vì "Dữ liệu".
+    expect(message('token', 'required')).toBe('Link nhóm không được để trống.')
+    expect(message('new_token', 'required')).toBe('Link mới không được để trống.')
   })
 
   it('mọi tổ hợp trường và lý do đều ra câu tiếng Việt hoàn chỉnh', () => {

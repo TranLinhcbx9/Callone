@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronsUpDownIcon } from 'lucide-react'
+import { bankDisplayName } from '@/modules/bill-split/domain/banks'
 import type { Bank } from '@/modules/bill-split/domain/types'
 import { useIsDesktop } from '@/shared/hooks/useMediaQuery'
 import { cn } from '@/shared/lib/utils'
@@ -36,7 +37,10 @@ export interface BankPickerProps {
   defaultOpen?: boolean
 }
 
-/** Ô chọn ngân hàng có tìm kiếm. Bấm mở ngăn kéo (điện thoại) hoặc hộp thoại (máy tính) chứa danh sách. */
+/**
+ * Ô chọn ngân hàng có tìm kiếm. Bấm mở ngăn kéo (điện thoại) hoặc hộp thoại (máy tính) chứa danh sách.
+ * `value` là mã BIN; nếu mã đó không có trong `banks` thì ô vẫn hiện "Ngân hàng <mã>" thay vì như chưa chọn.
+ */
 export function BankPicker({
   banks,
   value,
@@ -51,12 +55,26 @@ export function BankPicker({
   const [open, setOpen] = useState(defaultOpen)
   const [query, setQuery] = useState('')
   const isDesktop = useIsDesktop()
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const wasOpen = useRef(false)
   const selected = banks.find((bank) => bank.bin === value)
   const visible = useMemo(() => filter(banks, query), [filter, banks, query])
+
+  // Hộp danh sách không có nút kích hoạt theo kiểu Radix, nên khi đóng con trỏ rơi về body. Đưa con trỏ về ô chọn
+  // để người dùng bàn phím và trình đọc màn hình không bị mất chỗ.
+  useEffect(() => {
+    if (open) {
+      wasOpen.current = true
+    } else if (wasOpen.current) {
+      wasOpen.current = false
+      triggerRef.current?.focus({ preventScroll: true })
+    }
+  }, [open])
 
   return (
     <>
       <button
+        ref={triggerRef}
         type="button"
         id={id}
         disabled={disabled}
@@ -65,7 +83,7 @@ export function BankPicker({
         onClick={() => setOpen(true)}
         className={cn(
           'flex h-10 w-full items-center gap-2 rounded-lg border border-input bg-card px-3 text-left text-base shadow-xs transition-[border-color,box-shadow] duration-150 outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/25 disabled:cursor-not-allowed disabled:opacity-60 aria-invalid:border-destructive md:text-sm dark:bg-input/30',
-          !selected && 'text-muted-foreground',
+          !selected && !value && 'text-muted-foreground',
         )}
       >
         {selected ? (
@@ -73,6 +91,9 @@ export function BankPicker({
             <span className="min-w-0 flex-1 truncate">{selected.shortName}</span>
             <span className="text-small text-muted-foreground">{selected.code}</span>
           </>
+        ) : value ? (
+          // Mã BIN hợp lệ nhưng chưa có trong danh sách (server nhận mọi mã 6 số): hiện đúng thứ đang được lưu.
+          <span className="min-w-0 flex-1 truncate">{bankDisplayName(value, banks)}</span>
         ) : (
           <span className="flex-1">{placeholder}</span>
         )}
