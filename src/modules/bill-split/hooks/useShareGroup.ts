@@ -7,10 +7,11 @@ import { useCopyToClipboard } from '@/shared/hooks/useCopyToClipboard'
  * Dùng hộp chia sẻ của hệ điều hành khi có và đang dùng cảm ứng (điện thoại, máy tính bảng). Trên máy tính, hộp chia
  * sẻ của Windows hay macOS chọn ứng dụng rất vụng so với việc dán link vào Zalo hay Messenger, nên chép link luôn.
  */
-function canShareNatively(): boolean {
+export function canShareNatively(): boolean {
   return (
     typeof navigator !== 'undefined' &&
     typeof navigator.share === 'function' &&
+    typeof window.matchMedia === 'function' &&
     window.matchMedia('(pointer: coarse)').matches
   )
 }

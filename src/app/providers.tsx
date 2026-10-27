@@ -9,10 +9,16 @@ function createQueryClient(): QueryClient {
       queries: {
         staleTime: 15_000,
         refetchOnWindowFocus: true,
-        // Chỉ thử lại lỗi mạng. Mặc định thử 3 lần sẽ làm "không tìm thấy nhóm" hiện chậm vài giây.
-        retry: (failureCount, error) => isRetryableError(error) && failureCount < 3,
+        // Mặc định 'online' thì mất mạng là TẠM DỪNG chứ không báo lỗi: nhóm chưa có trong cache hiện "Đang tải nhóm…"
+        // mãi không có nút thử lại. 'always' cho truy vấn chạy và thất bại thật, giao diện lỗi và việc thử lại đã có sẵn.
+        networkMode: 'always',
+        // Chỉ thử lại lỗi mạng. Mặc định thử 3 lần sẽ làm "không tìm thấy nhóm" hiện chậm vài giây. Trình duyệt đã báo
+        // offline thì thử lại cũng vô ích, báo lỗi ngay để người dùng bấm "Thử lại" khi có mạng.
+        retry: (failureCount, error) => isRetryableError(error) && failureCount < 3 && navigator.onLine !== false,
       },
-      mutations: { retry: false },
+      // Cùng lý do cho việc ghi, và còn một lý do nữa: lệnh ghi bị tạm dừng sẽ tự chạy khi có mạng lại dù người dùng đã
+      // đóng form ("Bỏ thay đổi"), thành một khoản chi ma, nhập lại thì bị lặp.
+      mutations: { retry: false, networkMode: 'always' },
     },
   })
 }

@@ -20,7 +20,10 @@ export interface QrDialogProps {
    * trượt xuống. Mã chụp theo số tiền lúc mở: người đang quét không bị đổi mã dưới tay khi nhóm có thay đổi.
    */
   transfer: Transfer | null
-  /** Đang ghi nhận "Đã chuyển xong": khóa các nút và không cho đóng hộp. */
+  /**
+   * Đang ghi nhận "Đã chuyển xong": nút đó quay vòng và khóa lại. Hộp thì không bao giờ khóa: mất mạng hay mạng chậm
+   * thì lần ghi có thể treo lâu, người dùng vẫn đóng được (kết quả vẫn vào cache và được báo bằng toast khi xong).
+   */
   isSaving?: boolean
   /** Bấm "Đã chuyển xong". Nơi gọi tự đóng hộp khi ghi nhận thành công. */
   onMarkPaid: (transfer: Transfer) => void
@@ -29,6 +32,7 @@ export interface QrDialogProps {
 /**
  * Hộp mã VietQR của một lần chuyển khoản: người nhận, số tiền, mã QR và thông tin tài khoản, footer [Đóng, Đã chuyển xong].
  * Chỉ có nội dung khi người nhận đã nhập tài khoản ngân hàng (nút "Mã QR" bị khóa nếu chưa).
+ * Đóng được ở mọi lúc, kể cả khi đang ghi nhận: bấm "Đóng", vuốt xuống hay nhấn Esc đều không bị chặn.
  */
 export function QrDialog({ open, onOpenChange, groupName, members, transfer, isSaving, onMarkPaid }: QrDialogProps) {
   const receiver = transfer ? members.find((member) => member.id === transfer.toMemberId) : undefined
@@ -48,10 +52,9 @@ export function QrDialog({ open, onOpenChange, groupName, members, transfer, isS
       description="Quét bằng app ngân hàng, mọi thông tin đã điền sẵn."
       size="sm"
       initialFocus="content"
-      dismissible={!isSaving}
       footer={
         <>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSaving}>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
             Đóng
           </Button>
           <Button onClick={() => transfer && onMarkPaid(transfer)} disabled={isSaving || !qr || !transfer}>

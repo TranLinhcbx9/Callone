@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useBlocker, useLocation, useNavigate, useParams } from 'react-router'
+import { useBlocker, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
 import { getBillSplitErrorMessage, isBillSplitError } from '@/modules/bill-split/api/errors'
 import { ExpenseFormView } from '@/modules/bill-split/components/ExpenseFormView'
@@ -24,6 +24,7 @@ import { useMe } from '@/modules/bill-split/hooks/useLocalState'
 import { useDeleteExpense, useSaveExpense } from '@/modules/bill-split/hooks/useMutations'
 import { useRotationRecovery } from '@/modules/bill-split/hooks/useRotationRecovery'
 import { billSplitPaths, groupTabPath } from '@/modules/bill-split/paths'
+import { useGoBack } from '@/shared/hooks/useGoBack'
 import { todayIsoDate } from '@/shared/lib/date'
 import { toAppError } from '@/shared/lib/errors'
 import { newId } from '@/shared/lib/id'
@@ -142,8 +143,6 @@ function ExpenseFormScreen({ token, group, expenseId }: { token: string; group: 
 }
 
 function ExpenseEditor({ token, group, initialDraft }: { token: string; group: Group; initialDraft: ExpenseDraft }) {
-  const navigate = useNavigate()
-  const location = useLocation()
   const queryClient = useQueryClient()
   const saveExpense = useSaveExpense()
   const deleteExpense = useDeleteExpense()
@@ -184,11 +183,11 @@ function ExpenseEditor({ token, group, initialDraft }: { token: string; group: G
     if (target.matches('input, textarea, button')) target.focus({ preventScroll: true })
   }, [issueTick])
 
-  /** Quay về nơi đã mở form (thường là trang nhóm). Mở thẳng bằng đường dẫn thì không có gì để quay lại nên thay bằng trang nhóm. */
-  function navigateBack() {
-    if (location.key !== 'default') void navigate(-1)
-    else void navigate(billSplitPaths.group(token), { replace: true })
-  }
+  /**
+   * Quay về trang nhóm mà không làm lịch sử dài thêm: mục liền trước đúng là trang nhóm thì lùi một bước, không thì thay mục
+   * form bằng trang nhóm (mở thẳng bằng đường dẫn, hoặc đi từ nơi khác tới). Xem useGoBack.
+   */
+  const navigateBack = useGoBack(billSplitPaths.group(token))
 
   function leave() {
     leaving.current = true
@@ -231,6 +230,32 @@ function ExpenseEditor({ token, group, initialDraft }: { token: string; group: G
     }
   }
 
+  /**
+   * Gửi một lần lưu. Tạo mới mà id đã có trên server thì server coi là gửi lại (lần trước đã thành công nhưng mất phản hồi)
+   * và trả đúng khoản chi cũ, BỎ QUA nội dung mới. Nếu người dùng đã sửa form giữa hai lần bấm (ví dụ 100k thành 200k),
+   * khoản chi trong kết quả khác thứ vừa gửi, và báo "Đã lưu" lúc đó là sai: danh sách vẫn hiện 100.000 ₫. Nên đối chiếu
+   * khoản chi trong kết quả; khác thì gửi tiếp một lần sửa với đúng version server trả về, để nội dung mới của người dùng thắng.
+   */
+  function send(expense: ExpenseInput) {
+    saveExpense.mutate(
+      { token, expense },
+      {
+        onSuccess: (latest) => {
+          const stored = latest.expenses.find((item) => item.id === expense.id)
+          if (expense.expectedVersion === null && stored && !expenseMatchesInput(stored, expense)) {
+            send({ ...expense, expectedVersion: stored.version })
+            return
+          }
+          finishSaved()
+        },
+        onError: (error) => {
+          if (isBillSplitError(error, 'BS_CONFLICT')) void reloadAfterConflict(expense)
+          else toast.error(getBillSplitErrorMessage(error))
+        },
+      },
+    )
+  }
+
   function submit() {
     const result = draftToInput(draft, group.members)
     if (!result.ok) {
@@ -239,17 +264,7 @@ function ExpenseEditor({ token, group, initialDraft }: { token: string; group: G
       return
     }
     setConflict(false)
-    const attempted = result.input
-    saveExpense.mutate(
-      { token, expense: attempted },
-      {
-        onSuccess: finishSaved,
-        onError: (error) => {
-          if (isBillSplitError(error, 'BS_CONFLICT')) void reloadAfterConflict(attempted)
-          else toast.error(getBillSplitErrorMessage(error))
-        },
-      },
-    )
+    send(result.input)
   }
 
   /** Lưu lại đúng khoản chi vừa xóa (cùng id, không kèm version). Gọi từ toast nên phải chạy được cả khi trang đã đóng. */
@@ -295,7 +310,7 @@ function ExpenseEditor({ token, group, initialDraft }: { token: string; group: G
       <PageBody padBottom className="pt-6">
         {conflict && (
           <Notice tone="danger" className="mb-6">
-            Người khác vừa sửa khoản chi này. Form đã cập nhật theo bản mới nhất, kiểm tra lại rồi bấm Lưu thay đổi.
+            Khoản chi này vừa được sửa ở nơi khác hoặc ở lần lưu trước. Form đã cập nhật theo bản mới nhất, kiểm tra lại rồi bấm Lưu thay đổi.
           </Notice>
         )}
         <ExpenseFormView

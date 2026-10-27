@@ -5,11 +5,13 @@ import { useLocation, useNavigate } from 'react-router'
 import { getBillSplitErrorMessage, isBillSplitError } from '@/modules/bill-split/api/errors'
 import { GroupCardSkeleton, GroupList } from '@/modules/bill-split/components/GroupCard'
 import { PasteLinkForm } from '@/modules/bill-split/components/PasteLinkForm'
-import { UnavailableGroups } from '@/modules/bill-split/components/UnavailableGroups'
+import { UnavailableGroups, type UnavailableGroup } from '@/modules/bill-split/components/UnavailableGroups'
 import { groupQueryOptions, useGroupSummaries } from '@/modules/bill-split/hooks/useGroup'
 import { useDocumentTitle } from '@/modules/bill-split/hooks/useDocumentTitle'
 import { useForgetGroup, useRecentGroups } from '@/modules/bill-split/hooks/useLocalState'
+import { recoverRotatedToken, useSavedGroupsRecovery } from '@/modules/bill-split/hooks/useSavedGroupsRecovery'
 import { billSplitPaths, parseGroupLink } from '@/modules/bill-split/paths'
+import { billSplitStore } from '@/modules/bill-split/storage'
 import { AppLink } from '@/shared/ui/AppLink'
 import { EmptyState } from '@/shared/ui/EmptyState'
 import { Notice } from '@/shared/ui/Notice'
@@ -36,6 +38,10 @@ const COLLAPSE_ABOVE = 10
  * Trang chủ module Chia tiền: các nhóm đã mở trên máy này (nguồn là localStorage, số liệu lấy từ server), tạo nhóm mới
  * và dán link nhóm bạn bè gửi. Nhóm đã lưu mà server không còn trả về (bị xóa, hoặc link đã đổi ở nơi khác) không làm hỏng
  * trang: nằm riêng ở khối "Không còn mở được", kèm nút xóa khỏi máy này.
+ *
+ * Ngoại lệ quan trọng: nhóm có lần đổi link đang chờ (đổi xong trên server mà phản hồi bị mất) cũng trả về "không có" khi hỏi
+ * bằng token cũ, nhưng nhóm vẫn còn dưới token mới. Nên trước khi coi nhóm là không còn mở được phải hỏi server về token mới
+ * (useSavedGroupsRecovery), và không bao giờ mời xóa khỏi máy khi còn lần đổi link đang chờ, vì xóa là mất luôn token mới.
  */
 export function BillSplitHomePage() {
   useDocumentTitle('Chia tiền')
@@ -46,6 +52,7 @@ export function BillSplitHomePage() {
   const forgetGroup = useForgetGroup()
   const tokens = useMemo(() => recents.map((group) => group.token), [recents])
   const summaries = useGroupSummaries(tokens)
+  const recovery = useSavedGroupsRecovery(tokens)
 
   const [link, setLink] = useState('')
   const [linkError, setLinkError] = useState<string | null>(null)
@@ -63,17 +70,25 @@ export function BillSplitHomePage() {
 
   // Chỉ kết luận "không còn mở được" khi server đã trả lời đúng cho tập token hiện tại. Trong lúc còn dùng dữ liệu cũ
   // (placeholder), một nhóm vừa được mở sẽ chưa có trong kết quả mà vẫn hoàn toàn bình thường.
-  const answered = summaries.isSuccess && !summaries.isPlaceholderData
-  const unavailable = useMemo(() => {
+  // Cũng chờ hỏi xong các nhóm có lần đổi link đang chờ: hỏi bằng token cũ chúng đều trả về "không có".
+  const answered = summaries.isSuccess && !summaries.isPlaceholderData && !recovery.checking
+  const unavailable = useMemo<UnavailableGroup[]>(() => {
     if (!answered) return []
     const live = new Set(available.map((group) => group.token))
-    return recents.filter((group) => !live.has(group.token))
-  }, [answered, available, recents])
+    return recents
+      .filter((group) => !live.has(group.token))
+      .map((group) => ({
+        token: group.token,
+        name: group.name,
+        state: recovery.statusOf(group.token) === 'unreachable' ? 'unreachable' : 'dead',
+      }))
+  }, [answered, available, recents, recovery])
 
-  const firstLoad = tokens.length > 0 && summaries.data === undefined
-  const loading = firstLoad && !summaries.isError
-  const failed = firstLoad && summaries.isError
   const hasGroups = available.length > 0
+  const firstLoad = tokens.length > 0 && summaries.data === undefined
+  // Đang hỏi lần đổi link đang chờ mà chưa có nhóm nào để hiện: giữ khung xương, đừng nháy "Chưa có nhóm nào".
+  const loading = (firstLoad && !summaries.isError) || (recovery.checking && !hasGroups)
+  const failed = firstLoad && summaries.isError
   const collapsible = available.length > COLLAPSE_ABOVE
   const visible = collapsible && !showAll ? available.slice(0, COLLAPSED_COUNT) : available
   // Nút nổi "Tạo nhóm mới" thay cho nút trong trạng thái trống. Cũng hiện khi danh sách đang tải hoặc lỗi: tạo nhóm không phụ thuộc vào đó.
@@ -93,7 +108,22 @@ export function BillSplitHomePage() {
       await queryClient.fetchQuery({ ...groupQueryOptions(token), staleTime: 0 })
       void navigate(billSplitPaths.group(token))
     } catch (error) {
-      setLinkError(isBillSplitError(error, 'BS_GROUP_NOT_FOUND') ? INVALID_LINK_MESSAGE : getBillSplitErrorMessage(error))
+      if (!isBillSplitError(error, 'BS_GROUP_NOT_FOUND')) {
+        setLinkError(getBillSplitErrorMessage(error))
+        return
+      }
+      // Link cũ của một nhóm mà máy này đã đổi link (phản hồi bị mất): token cũ đã chết nhưng nhóm còn dưới token mới.
+      try {
+        const recovered = await recoverRotatedToken(queryClient, token)
+        if (recovered) {
+          void navigate(billSplitPaths.group(recovered))
+          return
+        }
+        setLinkError(INVALID_LINK_MESSAGE)
+      } catch (recoverError) {
+        // Không hỏi được server: chưa biết link này sai hay chỉ là chưa kiểm tra được, nên nói đúng lỗi mạng.
+        setLinkError(getBillSplitErrorMessage(recoverError))
+      }
     } finally {
       setOpening(false)
     }
@@ -150,7 +180,15 @@ export function BillSplitHomePage() {
           />
         )}
 
-        <UnavailableGroups groups={unavailable} onForget={forgetGroup} />
+        <UnavailableGroups
+          groups={unavailable}
+          getHref={(group) => billSplitPaths.group(group.token)}
+          // Còn lần đổi link đang chờ thì không xóa: xóa khỏi máy cũng xóa luôn token mới, nhóm mất vĩnh viễn.
+          onForget={(token) => {
+            if (billSplitStore.getPendingRotation(token) === null) forgetGroup(token)
+          }}
+          onRetry={recovery.retry}
+        />
 
         <Section title="Mở nhóm có sẵn">
           <PasteLinkForm

@@ -67,6 +67,13 @@ export function MemberDialog({ token, group, member, open, onOpenChange }: Membe
   const isDeleting = deleteMember.isPending
   const busy = isSaving || isDeleting
 
+  // Hộp không bao giờ khóa người dùng: đang lưu hay xóa vẫn đóng được (Hủy, vuốt xuống, Esc), vì lúc mất mạng lần ghi có
+  // thể treo lâu. Kết quả vẫn vào cache nhóm; các hàm async bên dưới xem hộp còn mở không để báo lỗi đúng chỗ.
+  const openRef = useRef(open)
+  useEffect(() => {
+    openRef.current = open
+  }, [open])
+
   // Hộp xác nhận xóa không có nút kích hoạt theo kiểu Radix nên khi đóng, con trỏ rơi về body. Đóng mà hộp thành viên
   // còn mở (bấm Hủy, bấm ra ngoài, hoặc xóa lỗi) thì đưa con trỏ về nút "Xóa thành viên". Làm sau khi hộp đã đóng
   // (trong effect) vì lúc còn mở, hộp xác nhận giữ con trỏ trong nó.
@@ -111,10 +118,15 @@ export function MemberDialog({ token, group, member, open, onOpenChange }: Membe
         member: { id: member?.id ?? newMemberId, name: result.name, bank: result.bank },
       })
       toast.success(member ? `Đã lưu thông tin của ${result.name}` : `Đã thêm ${result.name} vào nhóm`)
-      onOpenChange(false)
+      // Chỉ đóng nếu hộp này còn mở: người dùng có thể đã đóng nó và mở một hộp khác trong lúc chờ.
+      if (openRef.current) onOpenChange(false)
     } catch (error) {
       const failure = describeMemberSaveError(error)
-      if ('errors' in failure) {
+      if (!openRef.current) {
+        // Hộp đã đóng trong lúc chờ: không còn ô nào để hiện lỗi, nên báo bằng toast và nói rõ là người nào.
+        const reason = 'errors' in failure ? (Object.values(failure.errors)[0] ?? '') : failure.message
+        toast.error(`Không lưu được ${result.name}. ${reason}`.trim())
+      } else if ('errors' in failure) {
         setErrors(failure.errors)
         focusFirstError(failure.errors)
       } else {
@@ -130,11 +142,13 @@ export function MemberDialog({ token, group, member, open, onOpenChange }: Membe
       // Người vừa xóa là "mình" thì bỏ lựa chọn, tránh giữ một id không còn trong nhóm.
       if (member.id === meId) setMe(null)
       closeConfirm(false)
-      onOpenChange(false)
+      if (openRef.current) onOpenChange(false)
       toast.success(`Đã xóa ${member.name} khỏi nhóm`)
     } catch (error) {
       closeConfirm(true)
-      toastDialogError(describeMemberDeleteError(error, member.name), { duration: 8000 })
+      const message = describeMemberDeleteError(error, member.name)
+      if (openRef.current) toastDialogError(message, { duration: 8000 })
+      else toast.error(message, { duration: 8000 })
     }
   }
 
@@ -144,7 +158,6 @@ export function MemberDialog({ token, group, member, open, onOpenChange }: Membe
       onOpenChange={onOpenChange}
       title={member ? 'Sửa thành viên' : 'Thêm thành viên'}
       description={member ? 'Nhập tài khoản ngân hàng để bạn bè trả tiền cho người này bằng mã QR.' : undefined}
-      dismissible={!busy}
     >
       <MemberForm
         values={values}
@@ -167,10 +180,9 @@ export function MemberDialog({ token, group, member, open, onOpenChange }: Membe
           title={`Xóa ${member.name}?`}
           description={`${member.name} sẽ bị xóa khỏi nhóm. Người đã có khoản chi hoặc lần trả nợ thì không xóa được.`}
           size="sm"
-          dismissible={!isDeleting}
           footer={
             <>
-              <Button variant="outline" onClick={() => closeConfirm(true)} disabled={isDeleting}>
+              <Button variant="outline" onClick={() => closeConfirm(true)}>
                 Hủy
               </Button>
               <Button variant="danger" onClick={remove} disabled={isDeleting}>

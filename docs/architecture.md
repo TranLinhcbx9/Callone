@@ -237,7 +237,7 @@ Hai cơ chế bù nhau và không giẫm nhau. Do đó `vercel.json` phải tr�
 | `Referrer-Policy: no-referrer` | Link nhóm chứa token bí mật trong đường dẫn, không được lộ qua header Referer. Quan trọng nhất |
 | `X-Content-Type-Options: nosniff` | Không cho trình duyệt đoán kiểu file |
 | `Permissions-Policy` | Tắt camera, micro, vị trí, thanh toán, USB, Bluetooth, cảm biến... vì app không dùng. Giữ nguyên clipboard (nút Dán, Sao chép link) và Web Share |
-| `Content-Security-Policy` | Script chỉ từ chính app, không inline, không eval. Kết nối chỉ tới chính app và `https://*.supabase.co`. Không cho nhúng vào khung (`frame-ancestors 'none'`) |
+| `Content-Security-Policy` | Script chỉ từ chính app, không inline, không eval. Kết nối chỉ tới chính app và đúng project Supabase đang dùng. Không cho nhúng vào khung (`frame-ancestors 'none'`) |
 
 `style-src` có `'unsafe-inline'` vì sonner và các thư viện Radix (Dialog, Select, ScrollArea) chèn thẻ `<style>` lúc chạy. Script thì không nới.
 

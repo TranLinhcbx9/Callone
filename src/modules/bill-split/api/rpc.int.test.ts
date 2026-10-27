@@ -4,10 +4,11 @@
  * Test tích hợp tầng api với Supabase local theo hợp đồng v1.1: npm run test:int
  * Cần `npm run db:start` và .env.local (VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY).
  *
- * Giới hạn tạo nhóm của server là 5 nhóm mỗi client và 100 nhóm toàn hệ thống trong 10 phút, nhóm đã xóa vẫn tính
- * (gửi lại cùng token không tính). Mỗi lần chạy file này tạo đúng 2 nhóm thật rồi xóa mềm khi xong, nên đừng chạy
- * liên tục: quá 2 lần trong 10 phút sẽ gặp BS_RATE_LIMITED ngay ở beforeAll. Không test việc chạm giới hạn ở đây
- * vì sẽ khóa các lần chạy sau; phần đó do pgTAP trong supabase/tests lo.
+ * Mỗi lần chạy file này tạo đúng 2 nhóm thật rồi xóa mềm khi xong. Trên production giới hạn tạo nhóm là 5 mỗi client và
+ * 100 toàn hệ thống trong 10 phút (nhóm đã xóa vẫn tính, gửi lại cùng token không tính), nhưng seed của Supabase local
+ * nâng cả hai lên 1.000.000 nên chạy ở local không bị chặn. Nếu chạy trên stack không có seed đó thì quá 2 lần trong
+ * 10 phút sẽ gặp BS_RATE_LIMITED ngay ở beforeAll. Không test việc chạm giới hạn ở đây; phần đó do pgTAP trong
+ * supabase/tests lo.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 // Phải đứng trước mọi import kéo theo supabase client (xem nội dung file).
@@ -171,7 +172,10 @@ describe('bs_* RPC với Supabase local (hợp đồng v1.1)', () => {
   })
 
   it('số tài khoản có NBSP và ký tự độ rộng bằng 0 giữa các chữ số: server bỏ hết, gửi thẳng không qua rpc.ts cũng vậy', async () => {
-    const junk = String.fromCodePoint(0xa0, 0x200b, 0x200e, 0x2060, 0xfeff)
+    // Đúng tập ký tự mà server bỏ trong số tài khoản: NBSP, U+200B tới U+200D, U+2060, U+FEFF và khoảng trắng Unicode.
+    const junk = String.fromCodePoint(0xa0, 0x200b, 0x200c, 0x200d, 0x2060, 0xfeff, 0x2003)
+    // Client còn bỏ thêm cả U+200E (dấu hướng chữ) và U+00AD (gạch nối mềm) mà server sẽ từ chối với format.
+    const clientOnlyJunk = String.fromCodePoint(0x200e, 0xad)
     const id = newId()
     const raw = await rawRpc('bs_save_member', {
       p_token: token,
@@ -188,9 +192,20 @@ describe('bs_* RPC với Supabase local (hợp đồng v1.1)', () => {
     const viaClient = await api.saveMember(token, {
       id,
       name: 'Mai',
-      bank: { bin: '970436', accountNumber: `0123${junk}456 789${junk}`, accountName: null },
+      bank: { bin: '970436', accountNumber: `0123${junk}456${clientOnlyJunk} 789${junk}`, accountName: null },
     })
     expect(viaClient.members.find((m) => m.id === id)?.bank?.accountNumber).toBe('0123456789')
+
+    // Ký tự Cf ngoài tập của hợp đồng thì server từ chối: đó là lý do client bỏ chúng trước khi gửi.
+    const rejected = await rawRpc('bs_save_member', {
+      p_token: token,
+      p_member_id: id,
+      p_name: 'Mai',
+      p_bank_bin: '970436',
+      p_bank_account: `0123${clientOnlyJunk}456789`,
+    })
+    expect(rejected.error?.message).toBe('BS_INVALID')
+    expect(JSON.parse(rejected.error?.details ?? 'null')).toEqual({ field: 'bank_account', reason: 'format' })
 
     // Trả nhóm về như cũ cho các test sau.
     expect((await api.deleteMember(token, id)).members.some((m) => m.id === id)).toBe(false)

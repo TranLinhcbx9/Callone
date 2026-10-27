@@ -17,6 +17,8 @@ export interface GroupSectionsProps {
   members: ReactNode
   /** Nút nổi riêng cho từng tab, ví dụ "Thêm khoản chi" ở tab Chi tiêu. Không truyền thì tab đó không có nút nổi. */
   actions?: Partial<Record<GroupSectionId, ReactNode>>
+  /** Dải thông báo chung cho cả ba tab, nằm ngay dưới thanh tab (ví dụ nhóm này chưa được lưu trên máy). */
+  notice?: ReactNode
 }
 
 const TABS: { id: GroupSectionId; label: string }[] = [
@@ -38,6 +40,7 @@ export function GroupSections({
   balances,
   members,
   actions,
+  notice,
 }: GroupSectionsProps) {
   const action = actions?.[value]
   return (
@@ -58,6 +61,7 @@ export function GroupSections({
         }
       />
       <PageBody padBottom={Boolean(action)} className="pt-5">
+        {notice && <div className="mb-5">{notice}</div>}
         <TabsContent value="expenses">{expenses}</TabsContent>
         <TabsContent value="balances">{balances}</TabsContent>
         <TabsContent value="members">{members}</TabsContent>

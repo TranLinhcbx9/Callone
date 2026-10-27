@@ -305,22 +305,25 @@ describe('thanh toán', () => {
 describe('thành viên', () => {
   const bank = { bin: '970436', accountNumber: '0123456789', accountName: 'NGUYEN VAN A' }
 
-  it('lưu thành viên có ngân hàng thì nhớ ngân hàng đó để điền sẵn lần sau', async () => {
+  const onlyBin = { bin: '970436', accountNumber: '', accountName: null }
+
+  it('lưu thành viên có ngân hàng thì nhớ ngân hàng đó để điền sẵn ô ngân hàng lần sau', async () => {
     const { api, options, run, cacheOf, store } = setup()
     api.saveMember.mockResolvedValueOnce(before)
     await run(options.saveMember, { token: T1, member: { id: 'A', name: 'An', bank } })
     expect(cacheOf(T1)).toEqual(before)
-    expect(store.getLastBank()).toEqual(bank)
+    expect(store.getLastBank()).toEqual(onlyBin)
   })
 
-  it('ngân hàng nhớ lại ở dạng đã chuẩn hóa như lúc gửi lên, số tài khoản có dấu cách không bị bỏ mất', async () => {
-    const { api, options, run, store } = setup()
+  it('chỉ nhớ BIN: số tài khoản và tên chủ tài khoản của bạn bè không nằm lại trên máy, kể cả khi dán có dấu cách', async () => {
+    const { api, options, run, store, backend } = setup()
     api.saveMember.mockResolvedValueOnce(before)
     await run(options.saveMember, {
       token: T1,
       member: { id: 'A', name: 'An', bank: { bin: '970436', accountNumber: '0123 456 789', accountName: 'Nguyễn Văn A' } },
     })
-    expect(store.getLastBank()).toEqual({ bin: '970436', accountNumber: '0123456789', accountName: 'NGUYEN VAN A' })
+    expect(store.getLastBank()).toEqual(onlyBin)
+    expect([...backend.data.values()].join(' ')).not.toMatch(/0123|456789|NGUYEN|Nguy/)
   })
 
   it('lưu thành viên không có ngân hàng thì không đụng tới ngân hàng đã nhớ', async () => {
@@ -328,7 +331,7 @@ describe('thành viên', () => {
     store.setLastBank(bank)
     api.saveMember.mockResolvedValue(before)
     await run(options.saveMember, { token: T1, member: { id: 'B', name: 'Bình', bank: null } })
-    expect(store.getLastBank()).toEqual(bank)
+    expect(store.getLastBank()).toEqual(onlyBin)
   })
 
   it('xóa thành viên đang dùng: lỗi BS_MEMBER_IN_USE báo thẳng lên, cache giữ nguyên', async () => {

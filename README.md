@@ -77,7 +77,7 @@ Kết quả cuối cùng là một link production công khai để bạn bè m�
 
 ### 1. Supabase cloud
 
-1. Vào https://supabase.com, tạo project tên `callone`, region Singapore. Tự đặt và giữ mật khẩu database.
+1. Vào https://supabase.com, tạo project tên `callone`, chọn region gần Việt Nam (Singapore hoặc Seoul). Tự đặt và giữ mật khẩu database.
 2. Ở terminal của bạn, đăng nhập và liên kết project (project ref nằm trong URL của dashboard):
    ```bash
    npx supabase login
@@ -95,28 +95,34 @@ Gói Free của Supabase tự tạm dừng sau khoảng 7 ngày không dùng. C�
 
 ### 2. Vercel
 
-Deploy bằng Vercel CLI (đã có sẵn trong `devDependencies`), không qua GitHub:
+Project Vercel nối với repo GitHub. **Push lên `main` là Vercel tự build và đưa lên production.** Push nhánh khác thì Vercel tạo bản preview.
+
+Thiết lập một lần, bằng Vercel CLI (đã có sẵn trong `devDependencies`):
 
 ```bash
 npx vercel login
 npx vercel link
 npx vercel env add VITE_SUPABASE_URL "production,preview"
 npx vercel env add VITE_SUPABASE_PUBLISHABLE_KEY "production,preview"
-npm run deploy
 ```
 
-- `vercel link`: chọn tài khoản của bạn, tạo project mới tên `callone`, thư mục `./`. Nếu CLI hỏi có muốn sửa cấu hình build không thì trả lời không, vì `vercel.json` đã khai báo framework Vite, lệnh `npm run build` và thư mục `dist`.
-- `vercel env add`: CLI hỏi giá trị, dán Project URL rồi publishable key ở bước trên. Nếu bỏ phần `"production,preview"` thì CLI hỏi chọn môi trường, giữ Production và Preview.
-- `npm run deploy`: Vercel tự cài gói, build và đưa lên production. CLI in ra địa chỉ production, dạng `https://callone.vercel.app`.
+- `vercel link`: chọn tài khoản của bạn, tạo project mới tên `callone`, thư mục `./`. CLI tự nối project với repo GitHub trong `git remote`. Nếu CLI hỏi có muốn sửa cấu hình build không thì trả lời không, vì `vercel.json` đã khai báo framework Vite, lệnh `npm run build` và thư mục `dist`.
+- `vercel env add`: CLI hỏi giá trị, dán Project URL rồi publishable key ở bước trên.
+
+Từ đó mỗi lần deploy chỉ là:
+
+```bash
+git push origin main
+```
 
 Lưu ý:
 
-- Vite nhúng hai biến môi trường vào bản build, nên đổi giá trị thì phải chạy lại `npm run deploy`.
-- `npm run deploy:preview` tạo bản xem thử. Với bảo vệ mặc định của Vercel (Standard Protection), địa chỉ preview và địa chỉ riêng của từng lần deploy cần đăng nhập Vercel. Gửi cho bạn bè địa chỉ production, không gửi hai loại kia. Nếu bạn bè thấy trang đăng nhập Vercel ở địa chỉ production thì vào Settings > Deployment Protection để kiểm tra.
-- `.vercelignore` giữ những thứ như `.cache`, `.env*`, `dist` không bị tải lên. Vercel CLI không đọc `.gitignore`, nên thêm thư mục tạm mới thì ghi vào `.vercelignore`.
+- `main` là production, nên chỉ push code đã qua `npm run check` và e2e. Muốn xem thử thì push nhánh khác để có link preview.
+- Vite nhúng hai biến môi trường vào bản build, nên đổi giá trị thì phải deploy lại (push lại, hoặc Redeploy trong dashboard Vercel).
+- Với bảo vệ mặc định của Vercel (Standard Protection), địa chỉ preview và địa chỉ riêng của từng lần deploy cần đăng nhập Vercel. Gửi cho bạn bè địa chỉ production, dạng `https://callone.vercel.app`. Nếu bạn bè thấy trang đăng nhập Vercel ở địa chỉ production thì vào Settings > Deployment Protection để kiểm tra.
+- Không qua GitHub cũng deploy được bằng CLI: `npm run deploy` (production) hoặc `npm run deploy:preview`. Khi đó `.vercelignore` giữ những thứ như `.cache`, `.env*`, `dist` không bị tải lên, vì Vercel CLI không đọc `.gitignore`.
 - Vercel đã tắt Node.js 20 từ 1/10/2026 nên bản build trên Vercel chạy Node mới hơn: `engines.node` là `>=20.19.0`, Vercel chọn bản mới nhất còn hỗ trợ (hiện là 24.x). Máy bạn vẫn dùng Node 20.19 bình thường.
-- Header bảo mật (CSP, Referrer-Policy...) nằm trong `vercel.json`. CSP chỉ cho kết nối tới chính app và `https://*.supabase.co`. Nếu sau này Supabase dùng tên miền riêng thì thêm origin đó vào `connect-src` trong `vercel.json`.
-- Muốn tự deploy mỗi lần push thì import repo GitHub trong dashboard Vercel và đặt hai biến môi trường ở Project Settings > Environment Variables.
+- Header bảo mật (CSP, Referrer-Policy...) nằm trong `vercel.json`. CSP chỉ cho kết nối tới chính app và project Supabase đang dùng (`https://alnlxjpjwksphndikymq.supabase.co`). Đổi sang project khác hay dùng tên miền riêng thì sửa origin trong `connect-src` của `vercel.json`.
 
 ## Cài như một ứng dụng
 

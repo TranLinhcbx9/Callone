@@ -5,6 +5,7 @@ import { RouteError } from '@/app/pages/RouteError'
 import { modules } from '@/app/registry'
 import { installPreloadErrorHandler } from '@/app/preloadError'
 import { RootLayout } from '@/app/RootLayout'
+import { historyTrail } from '@/shared/lib/historyTrail'
 
 const moduleRoutes: RouteObject[] = modules.map((module) => ({
   path: module.basePath,
@@ -35,3 +36,10 @@ export const router = createBrowserRouter([
     ],
   },
 ])
+
+// Ghi lại đường dẫn của từng mục lịch sử trình duyệt cho nút quay lại trong app (xem shared/lib/historyTrail và useGoBack):
+// mục đầu tiên ngay khi router được dựng, các mục sau mỗi khi chuyển trang xong (không ghi lúc đang tải dở).
+historyTrail.record(router.state.location.pathname)
+router.subscribe((state) => {
+  if (state.navigation.state === 'idle') historyTrail.record(state.location.pathname)
+})

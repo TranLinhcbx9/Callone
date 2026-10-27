@@ -12,11 +12,15 @@ import { useDeleteSettlement, useSaveSettlement } from '@/modules/bill-split/hoo
 import { toastDialogError } from '@/modules/bill-split/pages/group/dialogToast'
 import { MemberDialog } from '@/modules/bill-split/pages/group/MemberDialog'
 import { QrDialog } from '@/modules/bill-split/pages/group/QrDialog'
+import {
+  isDefiniteRejection,
+  settlementIds,
+  settlementKey,
+} from '@/modules/bill-split/pages/group/settlementIds'
 import type { GroupTabProps } from '@/modules/bill-split/pages/group/tabProps'
 import { useMemberDialog } from '@/modules/bill-split/pages/group/useMemberDialog'
 import { todayIsoDate } from '@/shared/lib/date'
 import { formatVnd } from '@/shared/lib/format'
-import { newId } from '@/shared/lib/id'
 import { Section } from '@/shared/ui/Section'
 
 /** Khóa của một lần chuyển trong TransferList (busyKey). */
@@ -24,7 +28,7 @@ function transferKey(transfer: Transfer): string {
   return `${transfer.fromMemberId}:${transfer.toMemberId}`
 }
 
-/** Toast "Hoàn tác" ở lại lâu hơn toast thường để kịp bấm bằng ngón cái. */
+/** Toast có nút "Hoàn tác" ở lại lâu hơn toast thường để kịp bấm bằng ngón cái. */
 const UNDO_TOAST_MS = 8000
 
 /**
@@ -42,6 +46,8 @@ export function BalancesTab({ token, group, meId }: GroupTabProps) {
   const [qrOpen, setQrOpen] = useState(false)
   // Giữ nguyên khi đóng hộp QR để nội dung không biến mất giữa lúc hộp trượt xuống.
   const [qrTransfer, setQrTransfer] = useState<Transfer | null>(null)
+  // Bản sao của hai state trên cho các hàm async: chúng chạy xong sau khi người dùng có thể đã đóng hay mở hộp khác.
+  const qrShown = useRef<{ open: boolean; transfer: Transfer | null }>({ open: false, transfer: null })
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   // Khóa đồng bộ chống bấm đúp: state chỉ đổi ở lần render sau nên hai cú chạm liên tiếp có thể cùng lọt qua.
@@ -50,19 +56,43 @@ export function BalancesTab({ token, group, meId }: GroupTabProps) {
 
   const nameOf = (memberId: string) => group.members.find((member) => member.id === memberId)?.name ?? '?'
 
+  function showQr(transfer: Transfer) {
+    qrShown.current = { open: true, transfer }
+    setQrTransfer(transfer)
+    setQrOpen(true)
+  }
+
+  function changeQrOpen(open: boolean) {
+    qrShown.current = { ...qrShown.current, open }
+    setQrOpen(open)
+  }
+
+  /** Bỏ lần trả vừa ghi nhận (nút "Hoàn tác" của toast): xóa đúng lần trả đó theo id. */
+  async function undoMarkPaid(settlementId: string) {
+    try {
+      await deleteSettlement.mutateAsync({ token, settlementId })
+      toast.success('Đã hủy lần trả vừa ghi nhận')
+    } catch (error) {
+      toast.error(getBillSplitErrorMessage(error))
+    }
+  }
+
   /**
    * Ghi nhận một lần chuyển đã trả. Trả true khi thành công, để hộp QR biết có nên đóng.
-   * `fromDialog`: bấm từ hộp QR, nên lỗi hiện ở đầu màn hình để không che nút "Đã chuyển xong" ở chân hộp.
+   * Id của lần ghi giữ nguyên giữa các lần bấm cho tới khi biết chắc kết quả (xem settlementIds.ts): phản hồi bị mất
+   * rồi bấm lại chỉ ghi đè chính lần trả đó, không ghi trùng làm số dư đảo chiều.
    */
-  async function markPaid(transfer: Transfer, fromDialog = false): Promise<boolean> {
+  async function markPaid(transfer: Transfer): Promise<boolean> {
     if (working.current) return false
     working.current = true
+    const key = settlementKey(token, transfer)
+    const id = settlementIds.claim(key)
     setBusyKey(transferKey(transfer))
     try {
       await saveSettlement.mutateAsync({
         token,
         settlement: {
-          id: newId(),
+          id,
           fromMemberId: transfer.fromMemberId,
           toMemberId: transfer.toMemberId,
           amount: transfer.amount,
@@ -70,13 +100,17 @@ export function BalancesTab({ token, group, meId }: GroupTabProps) {
           note: null,
         },
       })
+      settlementIds.settle(key)
       toast.success(
         `Đã ghi nhận ${nameOf(transfer.fromMemberId)} trả ${nameOf(transfer.toMemberId)} ${formatVnd(transfer.amount)}`,
+        { duration: UNDO_TOAST_MS, action: { label: 'Hoàn tác', onClick: () => void undoMarkPaid(id) } },
       )
       return true
     } catch (error) {
+      if (isDefiniteRejection(error)) settlementIds.settle(key)
       const message = getBillSplitErrorMessage(error)
-      if (fromDialog) toastDialogError(message)
+      // Hộp QR còn mở thì lỗi hiện ở đầu màn hình để không che nút "Đã chuyển xong" ở chân hộp.
+      if (qrShown.current.open) toastDialogError(message)
       else toast.error(message)
       return false
     } finally {
@@ -86,7 +120,10 @@ export function BalancesTab({ token, group, meId }: GroupTabProps) {
   }
 
   async function confirmQr(transfer: Transfer) {
-    if (await markPaid(transfer, true)) setQrOpen(false)
+    if (!(await markPaid(transfer))) return
+    // Chỉ đóng nếu hộp vẫn đang hiện đúng lần chuyển này: lúc chờ, người dùng có thể đã đóng hộp hay mở mã khác.
+    const { open, transfer: shown } = qrShown.current
+    if (open && shown && transferKey(shown) === transferKey(transfer)) changeQrOpen(false)
   }
 
   /** Lưu lại đúng id cũ nên bấm "Hoàn tác" hai lần cũng chỉ có một lần trả. */
@@ -115,11 +152,6 @@ export function BalancesTab({ token, group, meId }: GroupTabProps) {
       working.current = false
       setDeletingId(null)
     }
-  }
-
-  function showQr(transfer: Transfer) {
-    setQrTransfer(transfer)
-    setQrOpen(true)
   }
 
   return (
@@ -160,7 +192,7 @@ export function BalancesTab({ token, group, meId }: GroupTabProps) {
 
       <QrDialog
         open={qrOpen}
-        onOpenChange={setQrOpen}
+        onOpenChange={changeQrOpen}
         groupName={group.name}
         members={group.members}
         transfer={qrTransfer}

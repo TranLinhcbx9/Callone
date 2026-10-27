@@ -7,9 +7,10 @@ import { addExpense, rpc, seedGroup, type SeededGroup } from './support/seed'
 /**
  * Trả nợ và thành viên của một nhóm, chạy với Supabase local (cần .cache/db-ready, xem README).
  *
- * Cả file dùng chung MỘT nhóm dựng sẵn qua RPC (tạo nhóm bị giới hạn 30 nhóm mỗi 10 phút trên toàn hệ thống), và
- * các test chạy nối tiếp, bước sau dựa vào kết quả bước trước. Mỗi test mở trang mới (context mới) nên "mình là ai"
- * được đặt sẵn vào localStorage. Ảnh chụp từng bước nằm ở test-results/settle/.
+ * Cả file dùng chung MỘT nhóm dựng sẵn qua RPC (tạo nhóm bị giới hạn tốc độ: hợp đồng v1.1 cho 5 lần mỗi client và 100
+ * lần toàn hệ thống trong 10 phút, còn seed.sql của database local nâng cả hai lên rất cao), và các test chạy nối
+ * tiếp, bước sau dựa vào kết quả bước trước. Mỗi test mở trang mới (context mới) nên "mình là ai" được đặt sẵn vào
+ * localStorage. Ảnh chụp từng bước nằm ở test-results/settle/.
  *
  * Số dư của nhóm dựng sẵn (Linh, Hưng, Mai, Tú; Hưng là "mình"):
  * - Lẩu gà lá é 1.200.000 ₫ Linh trả, chia đều bốn người: mỗi người 300.000 ₫.
@@ -91,7 +92,8 @@ function settlementRow(page: Page, sentence: string): Locator {
 }
 
 /**
- * Dòng của một thành viên ở tab Thành viên. Chỉ tìm trong các danh sách của trang (role="list"), vì mỗi toast
+ * Dòng của một thành viên ở tab Thành viên: một <div role="listitem"> bọc nút bấm được (mở hộp sửa thành viên), nên
+ * dùng .getByRole('button') của dòng để bấm. Chỉ tìm trong các danh sách của trang (role="list"), vì mỗi toast
  * cũng là một listitem và có thể nhắc tên người đó ("Đã thêm Bin vào nhóm").
  */
 function memberRow(page: Page, name: string): Locator {
@@ -267,6 +269,129 @@ test('xóa lần trả rồi hoàn tác', async ({ page }, info) => {
   await expect(page.getByRole('heading', { name: /^Đã thanh toán\s*2$/ })).toBeVisible()
 })
 
+test('"Đã trả" có nút "Hoàn tác", và khi mọi người huề thì không còn gợi ý', async ({ page }, info) => {
+  await openGroup(page, 'so-du')
+  await transfer(page, 'Tú chuyển cho Linh').getByRole('button', { name: 'Đã trả' }).click()
+  const paidToast = page.locator('[data-sonner-toast]').filter({ hasText: `Đã ghi nhận Tú trả Linh ${money(300_000)}` })
+  await expect(paidToast).toBeVisible()
+
+  // Mọi người huề: dải xanh "không ai nợ ai", không còn khối gợi ý chuyển khoản.
+  await expect(page.getByText('Mọi người đã cân bằng, không ai nợ ai.')).toBeVisible()
+  await expect(page.getByRole('heading', { name: /^Gợi ý chuyển khoản/ })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: /^Đã thanh toán\s*3$/ })).toBeVisible()
+  await shot(page, info, '09-moi-nguoi-da-hue', { fullPage: true })
+
+  // "Hoàn tác" xóa đúng lần trả vừa ghi nhận.
+  await paidToast.getByRole('button', { name: 'Hoàn tác' }).click()
+  await expect(page.getByText('Đã hủy lần trả vừa ghi nhận')).toBeVisible()
+  await expect(page.getByText('Mọi người đã cân bằng, không ai nợ ai.')).toHaveCount(0)
+  await expect(transfer(page, 'Tú chuyển cho Linh')).toContainText(money(300_000))
+  await expect(page.getByRole('heading', { name: /^Đã thanh toán\s*2$/ })).toBeVisible()
+})
+
+test('mất phản hồi giữa chừng rồi bấm lại: không ghi trùng lần trả', async ({ page }, info) => {
+  await openGroup(page, 'so-du')
+
+  // Server nhận và ghi xong lần trả, nhưng phản hồi không về tới trình duyệt: mọi lần gửi (kể cả hai lần tự thử lại
+  // khi rớt mạng) đều bị cắt sau khi server đã nhận.
+  let reachedServer = 0
+  await page.route('**/rest/v1/rpc/bs_save_settlement', async (route) => {
+    await route.fetch()
+    reachedServer++
+    await route.abort('connectionreset')
+  })
+  await transfer(page, 'Tú chuyển cho Linh').getByRole('button', { name: 'Mã QR' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Mã QR chuyển khoản' })
+  await dialog.getByRole('button', { name: 'Đã chuyển xong' }).click()
+  await expect(page.getByText('Không có kết nối mạng. Kiểm tra mạng rồi thử lại.').first()).toBeVisible()
+  expect(reachedServer).toBeGreaterThanOrEqual(1)
+  // Hộp vẫn mở và nút bấm lại được.
+  await expect(dialog.getByRole('button', { name: 'Đã chuyển xong' })).toBeEnabled()
+
+  // Mạng ổn lại, bấm lại: gửi đúng id cũ nên chỉ ghi đè chính lần trả đó.
+  await page.unroute('**/rest/v1/rpc/bs_save_settlement')
+  await dialog.getByRole('button', { name: 'Đã chuyển xong' }).click()
+  await expect(dialog).toBeHidden()
+  const paidToast = page.locator('[data-sonner-toast]').filter({ hasText: `Đã ghi nhận Tú trả Linh ${money(300_000)}` })
+  await expect(paidToast).toBeVisible()
+
+  // Nếu ghi trùng, Tú sẽ dư 300.000 ₫ và Linh âm 300.000 ₫, và có bốn lần trả thay vì ba.
+  await expect(page.getByRole('heading', { name: /^Đã thanh toán\s*3$/ })).toBeVisible()
+  await expect(balanceRow(page, 'Tú')).toContainText('Đã cân bằng')
+  await expect(balanceRow(page, 'Linh')).toContainText('Đã cân bằng')
+  await shot(page, info, '10-khong-ghi-trung', { fullPage: true })
+
+  // Trả nhóm về như cũ cho các test sau: hoàn tác chỉ xóa được một lần trả, nên cũng chứng tỏ không có lần trả thứ hai.
+  await paidToast.getByRole('button', { name: 'Hoàn tác' }).click()
+  await expect(page.getByText('Đã hủy lần trả vừa ghi nhận')).toBeVisible()
+  await expect(page.getByRole('heading', { name: /^Đã thanh toán\s*2$/ })).toBeVisible()
+  await expect(transfer(page, 'Tú chuyển cho Linh')).toBeVisible()
+})
+
+test('mất mạng: không kẹt giao diện, hộp mã QR luôn đóng được, nút trở lại kèm thông báo rõ ràng', async ({ page, context }, info) => {
+  // Mỗi lần thử ngoại tuyến mất khoảng 2 giây (tự thử lại hai lần) và ba lần chờ toast cũ tự tắt, gần 20 giây tổng cộng.
+  test.setTimeout(60_000)
+  await openGroup(page, 'so-du')
+  const offline = page.getByText('Không có kết nối mạng. Kiểm tra mạng rồi thử lại.')
+  const tuPaid = transfer(page, 'Tú chuyển cho Linh').getByRole('button', { name: 'Đã trả' })
+  await expect(tuPaid).toBeVisible()
+
+  /**
+   * Chờ toast lỗi cũ tự tắt, để lần báo lỗi sau chắc chắn là của lần thử sau. Không bấm nút đóng của toast được vì hộp
+   * thoại (modal) đang mở chặn mọi thao tác ra ngoài nó, và đếm toast cũng không được vì chúng tự mất sau vài giây.
+   */
+  const clearToasts = () => expect(offline).toHaveCount(0, { timeout: 12_000 })
+  await context.setOffline(true)
+
+  // "Đã trả" ngoài danh sách: báo lỗi, nút bấm lại được, không ghi gì.
+  await tuPaid.click()
+  await expect(offline.first()).toBeVisible()
+  await expect(tuPaid).toBeEnabled()
+  await expect(page.getByRole('heading', { name: /^Đã thanh toán\s*2$/ })).toBeVisible()
+  await clearToasts()
+
+  // "Đã chuyển xong" trong hộp mã QR: lỗi hiện ra, hộp vẫn mở và nút bấm lại được.
+  await transfer(page, 'Tú chuyển cho Linh').getByRole('button', { name: 'Mã QR' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Mã QR chuyển khoản' })
+  const done = dialog.getByRole('button', { name: 'Đã chuyển xong' })
+  await expect(dialog).toBeVisible()
+  await done.click()
+  await expect(offline.first()).toBeVisible()
+  await expect(done).toBeEnabled()
+  await expect(dialog).toBeVisible()
+  await shot(page, info, '11-mat-mang-trong-hop-qr')
+  await clearToasts()
+
+  // Đang chờ vẫn đóng được: bấm "Đã chuyển xong", nút quay vòng (đang chờ), đóng ngay mà không đợi lần ghi kết thúc.
+  await done.click()
+  await expect(done).toBeDisabled()
+  const close = dialog.getByRole('button', { name: 'Đóng' }).last()
+  await expect(close).toBeEnabled()
+  await close.click()
+  await expect(dialog).toBeHidden()
+  // Lỗi vẫn được báo (bằng toast) sau khi hộp đã đóng.
+  await expect(offline.first()).toBeVisible()
+  await expect(tuPaid).toBeEnabled()
+  await clearToasts()
+
+  // Có mạng lại thì ghi được bình thường.
+  await context.setOffline(false)
+  await tuPaid.click()
+  const paidToast = page.locator('[data-sonner-toast]').filter({ hasText: `Đã ghi nhận Tú trả Linh ${money(300_000)}` })
+  await expect(paidToast).toBeVisible()
+  await expect(page.getByRole('heading', { name: /^Đã thanh toán\s*3$/ })).toBeVisible()
+  await paidToast.getByRole('button', { name: 'Hoàn tác' }).click()
+  await expect(page.getByRole('heading', { name: /^Đã thanh toán\s*2$/ })).toBeVisible()
+})
+
+test('nút "Chia sẻ" của hệ điều hành chỉ hiện trên điện thoại, máy tính chỉ có "Sao chép link"', async ({ page, isMobile }) => {
+  await openGroup(page, 'thanh-vien')
+  await expect(page.getByRole('button', { name: 'Sao chép link' }).first()).toBeVisible()
+  const share = page.getByRole('button', { name: 'Chia sẻ', exact: true })
+  if (isMobile) await expect(share).toBeVisible()
+  else await expect(share).toHaveCount(0)
+})
+
 test('thêm và xóa thành viên', async ({ page }, info) => {
   // Ngân hàng nhập lần gần nhất được điền sẵn cho người mới, số tài khoản thì không.
   await openGroup(page, 'thanh-vien', { lastBank: LINH_BANK })
@@ -274,8 +399,10 @@ test('thêm và xóa thành viên', async ({ page }, info) => {
   await expect(page.getByText('Bạn đang dùng nhóm này với tên Hưng.')).toBeVisible()
   await expect(memberRow(page, 'Linh')).toContainText('Vietcombank · ••••6789')
   await expect(memberRow(page, 'Mai')).toContainText('Chưa nhập tài khoản')
+  // Mỗi dòng là một listitem bọc một nút, nên trình đọc màn hình đọc đó là nút và getByRole('button') tìm được.
+  await expect(page.getByRole('button', { name: /^Linh.*Vietcombank/ })).toBeVisible()
   await expect(page.getByRole('heading', { name: /^Thành viên\s*4$/ })).toBeVisible()
-  await shot(page, info, '09-thanh-vien', { fullPage: true })
+  await shot(page, info, '12-thanh-vien', { fullPage: true })
 
   await page.getByRole('button', { name: 'Thêm thành viên' }).click()
   const dialog = page.getByRole('dialog', { name: 'Thêm thành viên' })
@@ -296,7 +423,7 @@ test('thêm và xóa thành viên', async ({ page }, info) => {
 
   // Thêm "Bin" không kèm tài khoản: ngân hàng chỉ được điền sẵn nên bị bỏ qua, không báo thiếu số tài khoản.
   await dialog.locator('#member-name').fill('Bin')
-  await shot(page, info, '10-them-thanh-vien')
+  await shot(page, info, '13-them-thanh-vien')
   await submit.click()
   await expect(page.getByText('Đã thêm Bin vào nhóm')).toBeVisible()
   await expect(dialog).toBeHidden()
@@ -304,13 +431,13 @@ test('thêm và xóa thành viên', async ({ page }, info) => {
   await expect(page.getByRole('heading', { name: /^Thành viên\s*5$/ })).toBeVisible()
 
   // Xóa "Bin" (chưa có khoản chi nào) sau khi xác nhận.
-  await memberRow(page, 'Bin').click()
+  await memberRow(page, 'Bin').getByRole('button').click()
   const edit = page.getByRole('dialog', { name: 'Sửa thành viên' })
   await expect(edit).toBeVisible()
   await edit.getByRole('button', { name: 'Xóa thành viên' }).click()
   const confirm = page.getByRole('dialog', { name: 'Xóa Bin?' })
   await expect(confirm).toBeVisible()
-  await shot(page, info, '11-xac-nhan-xoa-thanh-vien')
+  await shot(page, info, '14-xac-nhan-xoa-thanh-vien')
   await confirm.getByRole('button', { name: 'Xóa', exact: true }).click()
 
   await expect(page.getByText('Đã xóa Bin khỏi nhóm')).toBeVisible()
@@ -320,7 +447,7 @@ test('thêm và xóa thành viên', async ({ page }, info) => {
 
 test('không xóa được thành viên đã có khoản chi', async ({ page }, info) => {
   await openGroup(page, 'thanh-vien')
-  await memberRow(page, 'Tú').click()
+  await memberRow(page, 'Tú').getByRole('button').click()
   const edit = page.getByRole('dialog', { name: 'Sửa thành viên' })
   await edit.getByRole('button', { name: 'Xóa thành viên' }).click()
   await page.getByRole('dialog', { name: 'Xóa Tú?' }).getByRole('button', { name: 'Xóa', exact: true }).click()
@@ -329,7 +456,7 @@ test('không xóa được thành viên đã có khoản chi', async ({ page }, 
   await expect(page.getByRole('dialog', { name: 'Xóa Tú?' })).toBeHidden()
   // Hộp thành viên vẫn mở và con trỏ về nút "Xóa thành viên" (không rơi ra ngoài hộp).
   await expect(edit.getByRole('button', { name: 'Xóa thành viên' })).toBeFocused()
-  await shot(page, info, '12-khong-xoa-duoc')
+  await shot(page, info, '15-khong-xoa-duoc')
 
   // Tú vẫn còn trong nhóm.
   await edit.getByRole('button', { name: 'Hủy' }).click()
@@ -354,10 +481,10 @@ test('ngân hàng có mã BIN ngoài danh sách vẫn hiện đúng ở danh sá
   await expect(memberRow(page, 'Linh')).toContainText('Ngân hàng 999999 · ••••6789')
 
   // Form sửa hiện đúng mã đang lưu thay vì như chưa chọn ngân hàng, và lưu lại không làm mất nó.
-  await memberRow(page, 'Linh').click()
+  await memberRow(page, 'Linh').getByRole('button').click()
   const edit = page.getByRole('dialog', { name: 'Sửa thành viên' })
   await expect(edit.locator('#member-bank')).toContainText('Ngân hàng 999999')
-  await shot(page, info, '13-ngan-hang-ngoai-danh-sach')
+  await shot(page, info, '16-ngan-hang-ngoai-danh-sach')
   await edit.getByRole('button', { name: 'Lưu', exact: true }).click()
   await expect(page.getByText('Đã lưu thông tin của Linh')).toBeVisible()
   await expect(memberRow(page, 'Linh')).toContainText('Ngân hàng 999999 · ••••6789')
@@ -388,7 +515,7 @@ test('số tiền vượt mức tối đa của mã QR: khóa "Mã QR" và nói 
   await expect(card.getByRole('button', { name: 'Đã trả' })).toBeEnabled()
   // Lần chuyển nhỏ hơn vẫn có mã QR bình thường.
   await expect(transfer(page, 'Tú chuyển cho Linh').getByRole('button', { name: 'Mã QR' })).toBeEnabled()
-  await shot(page, info, '14-so-tien-qua-lon', { fullPage: true })
+  await shot(page, info, '17-so-tien-qua-lon', { fullPage: true })
 })
 
 test('đổi link mới: link cũ không còn mở được, link mới dùng được', async ({ page }, info) => {
@@ -410,7 +537,7 @@ test('đổi link mới: link cũ không còn mở được, link mới dùng đ
 
   await rotate.click()
   await expect(confirm).toBeVisible()
-  await shot(page, info, '15-xac-nhan-doi-link')
+  await shot(page, info, '18-xac-nhan-doi-link')
   await confirm.getByRole('button', { name: 'Đổi link' }).click()
 
   // Mở lại trang theo token mới (thay vì thêm vào lịch sử), vẫn ở tab Thành viên, kèm thông báo nhắc gửi lại link.
@@ -435,13 +562,13 @@ test('đổi link mới: link cũ không còn mở được, link mới dùng đ
   const recentTokens = stored.recents.map((item) => item.token)
   expect(recentTokens).toContain(newToken)
   expect(recentTokens).not.toContain(oldToken)
-  await shot(page, info, '16-link-moi', { fullPage: true })
+  await shot(page, info, '19-link-moi', { fullPage: true })
 
   // Máy của một người bạn (localStorage trống): link cũ hết hiệu lực, link mới mở được.
   await page.evaluate(() => localStorage.clear())
   await page.goto(`/bill-split/g/${oldToken}`)
   await expect(page.getByRole('heading', { name: 'Không tìm thấy nhóm' })).toBeVisible()
-  await shot(page, info, '17-link-cu', { fullPage: true })
+  await shot(page, info, '20-link-cu', { fullPage: true })
   await page.goto(`/bill-split/g/${newToken}`)
   await expect(page.getByText(GROUP_NAME).first()).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Không tìm thấy nhóm' })).toHaveCount(0)

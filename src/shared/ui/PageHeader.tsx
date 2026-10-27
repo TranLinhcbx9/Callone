@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { ArrowLeftIcon, XIcon } from 'lucide-react'
+import { useGoBack } from '@/shared/hooks/useGoBack'
 import { useScrolled } from '@/shared/hooks/useScrolled'
 import { cn } from '@/shared/lib/utils'
 import { AppLink } from '@/shared/ui/AppLink'
@@ -8,7 +9,11 @@ import { Button } from '@/shared/ui/button'
 export interface PageHeaderProps {
   title: ReactNode
   subtitle?: ReactNode
-  /** Đi tới đường dẫn khi bấm nút quay lại. */
+  /**
+   * Trang cha của trang này, mở khi bấm nút quay lại. Mục liền trước trong lịch sử đúng là trang cha thì lùi lịch sử
+   * (như bấm Back), không thì thay mục hiện tại bằng trang cha: nút quay lại không làm lịch sử dài thêm. Vẫn là liên kết thật
+   * (mở tab mới, sao chép địa chỉ được).
+   */
   backHref?: string
   /** Hoặc xử lý riêng khi bấm nút quay lại (bỏ qua nếu có backHref). */
   onBack?: () => void
@@ -41,6 +46,7 @@ export function PageHeader({
   className,
 }: PageHeaderProps) {
   const scrolled = useScrolled()
+  const goBack = useGoBack(backHref)
   const hasBack = Boolean(backHref || onBack)
   const label = backLabel ?? (backIcon === 'close' ? 'Đóng' : 'Quay lại')
   const BackIcon = backIcon === 'close' ? XIcon : ArrowLeftIcon
@@ -57,7 +63,17 @@ export function PageHeader({
         {hasBack ? (
           <Button variant="ghost" size="icon-lg" aria-label={label} asChild={Boolean(backHref)} onClick={backHref ? undefined : onBack}>
             {backHref ? (
-              <AppLink href={backHref} aria-label={label}>
+              <AppLink
+                href={backHref}
+                aria-label={label}
+                onClick={(event) => {
+                  // Bấm kèm Ctrl, Cmd, Shift hay chuột giữa là mở tab mới, và địa chỉ ngoài app: để trình duyệt tự xử lý.
+                  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+                  if (!backHref.startsWith('/')) return
+                  event.preventDefault()
+                  goBack()
+                }}
+              >
                 <BackIcon />
               </AppLink>
             ) : (

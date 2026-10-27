@@ -9,7 +9,13 @@ import type { Group } from '@/modules/bill-split/domain/types'
 import { useDocumentTitle } from '@/modules/bill-split/hooks/useDocumentTitle'
 import { useGroup } from '@/modules/bill-split/hooks/useGroup'
 import { useGroupGone } from '@/modules/bill-split/hooks/useGroupGone'
-import { useForgetGroup, useMe, useRememberGroup } from '@/modules/bill-split/hooks/useLocalState'
+import {
+  useForgetGroup,
+  useMe,
+  useRecentGroups,
+  useRecentGroupsFull,
+  useRememberGroup,
+} from '@/modules/bill-split/hooks/useLocalState'
 import { useDeleteGroup } from '@/modules/bill-split/hooks/useMutations'
 import { useRotationRecovery } from '@/modules/bill-split/hooks/useRotationRecovery'
 import { useShareGroup } from '@/modules/bill-split/hooks/useShareGroup'
@@ -18,8 +24,10 @@ import { AddExpenseButton, ExpensesTab } from '@/modules/bill-split/pages/group/
 import { RenameGroupDialog, WhoAmIDialog } from '@/modules/bill-split/pages/group/GroupDialogs'
 import { MembersTab } from '@/modules/bill-split/pages/group/MembersTab'
 import type { GroupTabProps } from '@/modules/bill-split/pages/group/tabProps'
+import { MAX_RECENT_GROUPS } from '@/modules/bill-split/storage'
 import { billSplitPaths, GROUP_TAB_PARAMS, groupTabPath, parseGroupTab } from '@/modules/bill-split/paths'
 import { toAppError } from '@/shared/lib/errors'
+import { Notice } from '@/shared/ui/Notice'
 
 /**
  * Nhóm đã tự hỏi "Bạn là ai trong nhóm?" trong lần chạy app này. Nằm ngoài component để đi từ trang nhóm sang form
@@ -102,6 +110,12 @@ function GroupView({ token, group, onLeaving }: { token: string; group: Group; o
   useRememberGroup(token, group.name)
   useDocumentTitle(group.name)
 
+  // Danh sách nhóm trên máy đã đầy và nhóm này không nằm trong đó: nó sẽ không hiện ở trang Chia tiền. Nói thẳng và cố định
+  // (không chỉ một lần mỗi lần chạy app), vì mất link là mất nhóm trên máy này.
+  const recents = useRecentGroups()
+  const listFull = useRecentGroupsFull()
+  const unsaved = listFull && !recents.some((saved) => saved.token === token)
+
   // Đánh dấu đã hỏi để lần quay lại trang này trong cùng lượt chạy (ví dụ từ form khoản chi) không hỏi nữa.
   useEffect(() => {
     if (overlay === 'who') promptedTokens.add(token)
@@ -171,6 +185,14 @@ function GroupView({ token, group, onLeaving }: { token: string; group: Group; o
         expenses={<ExpensesTab {...tabProps} />}
         balances={<BalancesTab {...tabProps} />}
         members={<MembersTab {...tabProps} />}
+        notice={
+          unsaved ? (
+            <Notice tone="warning">
+              Máy này đã lưu đủ {MAX_RECENT_GROUPS} nhóm nên nhóm này không hiện ở trang Chia tiền. Hãy chép link ở tab
+              Thành viên để mở lại sau.
+            </Notice>
+          ) : undefined
+        }
         // Nhóm chưa có khoản chi thì nút "Thêm khoản chi" đã nằm trong trạng thái trống, không cần thêm nút nổi.
         actions={{ expenses: group.expenses.length > 0 ? <AddExpenseButton token={token} floating /> : undefined }}
       />

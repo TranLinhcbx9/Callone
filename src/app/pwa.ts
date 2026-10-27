@@ -41,6 +41,9 @@ export function registerPwa(): void {
       }
       toast('Callone vừa được cập nhật ở cửa sổ khác', {
         id: UPDATE_TOAST_ID,
+        // Toast cùng id được Sonner gộp với toast cũ: không ghi đè thì dòng "Trang sẽ tải lại khi cập nhật." của toast
+        // "Đã có phiên bản mới" vẫn còn ở đây, sai nghĩa. Phải truyền khóa này (kể cả undefined) thì mới thay được.
+        description: undefined,
         duration: Infinity,
         action: { label: 'Tải lại', onClick: () => window.location.reload() },
       })

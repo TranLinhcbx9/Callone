@@ -41,7 +41,11 @@ const ROW =
 const INTERACTIVE =
   'hover:bg-accent/60 active:bg-accent focus-visible:bg-accent/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40'
 
-/** Một dòng trong ListGroup: leading, tiêu đề + phụ đề, rồi phần bên phải. Tự chọn thẻ a, button hoặc div. */
+/**
+ * Một dòng trong ListGroup: leading, tiêu đề + phụ đề, rồi phần bên phải. Tự chọn thẻ a, button hoặc div.
+ * Dòng bấm được là một `<div role="listitem">` bọc liên kết hoặc nút: role listitem không đè lên thẻ a hay button,
+ * nên trình đọc màn hình vẫn đọc đó là liên kết hoặc nút, và getByRole('link') hay getByRole('button') tìm thấy dòng.
+ */
 export function ListRow({
   leading,
   title,
@@ -78,16 +82,20 @@ export function ListRow({
 
   if (href && !disabled) {
     return (
-      <AppLink href={href} role="listitem" className={classes}>
-        {content}
-      </AppLink>
+      <div role="listitem">
+        <AppLink href={href} className={classes}>
+          {content}
+        </AppLink>
+      </div>
     )
   }
   if (onClick && !disabled) {
     return (
-      <button type="button" role="listitem" onClick={onClick} className={classes}>
-        {content}
-      </button>
+      <div role="listitem">
+        <button type="button" onClick={onClick} className={classes}>
+          {content}
+        </button>
+      </div>
     )
   }
   return (

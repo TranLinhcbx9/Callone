@@ -20,6 +20,15 @@ function nameKey(text: string): string {
   return normalizeName(text).toLocaleLowerCase('vi-VN')
 }
 
+/**
+ * Hai tên có phải một không: cắt hai đầu, gộp khoảng trắng, chuẩn hóa NFC (cùng một chữ "Đà Lạt" gõ từ bàn phím nào cũng
+ * khớp, kể cả dạng tổ hợp dấu) và không phân biệt hoa thường. Vẫn phải đúng cả dấu: "Hung" khác "Hưng".
+ * Dùng cho thành viên trùng tên và cho ô gõ lại tên nhóm để xác nhận xóa.
+ */
+export function sameName(a: string, b: string): boolean {
+  return nameKey(a) === nameKey(b)
+}
+
 /** Độ dài theo ký tự (code point), giống char_length của Postgres, khác .length ở các ký tự ngoài BMP như emoji. */
 function charLength(text: string): number {
   return Array.from(text).length

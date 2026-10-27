@@ -12,8 +12,11 @@ import { CreateGroupForm } from '@/modules/bill-split/components/CreateGroupForm
 import type { CreateGroupInput } from '@/modules/bill-split/domain/inputs'
 import { normalizeName, validateCreateGroup, type CreateGroupErrors } from '@/modules/bill-split/domain/groupForm'
 import { useDocumentTitle } from '@/modules/bill-split/hooks/useDocumentTitle'
+import { useRecentGroupsFull } from '@/modules/bill-split/hooks/useLocalState'
 import { useCreateGroup } from '@/modules/bill-split/hooks/useMutations'
-import { billSplitPaths } from '@/modules/bill-split/paths'
+import { MAX_RECENT_GROUPS } from '@/modules/bill-split/storage'
+import { billSplitPaths, groupTabPath } from '@/modules/bill-split/paths'
+import { Notice } from '@/shared/ui/Notice'
 import { PageBody } from '@/shared/ui/PageBody'
 import { PageHeader } from '@/shared/ui/PageHeader'
 
@@ -28,6 +31,8 @@ export function NewGroupPage() {
   useDocumentTitle('Tạo nhóm mới')
   const navigate = useNavigate()
   const createGroup = useCreateGroup()
+  // Danh sách nhóm trên máy đã đầy: nhóm mới tạo được nhưng sẽ không được lưu vào đó, người dùng phải tự giữ link.
+  const listFull = useRecentGroupsFull()
   const [name, setName] = useState('')
   const [memberNames, setMemberNames] = useState<string[]>([])
   const [errors, setErrors] = useState<CreateGroupErrors>({})
@@ -70,7 +75,9 @@ export function NewGroupPage() {
       { ...input, token: tokenFor(input) },
       {
         // replace: bấm Quay lại từ trang nhóm vừa tạo thì về trang Chia tiền chứ không rơi lại vào form đã điền.
-        onSuccess: ({ token }) => void navigate(billSplitPaths.group(token), { replace: true }),
+        // Danh sách đầy thì mở thẳng tab Thành viên, nơi có nút sao chép link: đó là cách duy nhất để giữ nhóm này.
+        onSuccess: ({ token }) =>
+          void navigate(listFull ? groupTabPath(token, 'members') : billSplitPaths.group(token), { replace: true }),
         onError: showServerError,
       },
     )
@@ -80,6 +87,12 @@ export function NewGroupPage() {
     <>
       <PageHeader title="Tạo nhóm mới" backHref={billSplitPaths.home()} backIcon="close" />
       <PageBody padBottom className="pt-6">
+        {listFull && (
+          <Notice tone="warning" className="mb-6">
+            Máy này đã lưu đủ {MAX_RECENT_GROUPS} nhóm. Nhóm mới vẫn tạo được nhưng sẽ không hiện ở trang Chia tiền, nên nhớ
+            chép link nhóm ngay sau khi tạo.
+          </Notice>
+        )}
         <CreateGroupForm
           name={name}
           onNameChange={(value) => {

@@ -121,7 +121,8 @@ export function MemberForm({
 
       <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
         {onCancel && (
-          <Button type="button" variant="outline" onClick={onCancel} disabled={isSaving}>
+          // Không khóa khi đang lưu: lần lưu có thể treo lâu lúc mất mạng, người dùng vẫn phải thoát ra được.
+          <Button type="button" variant="outline" onClick={onCancel}>
             Hủy
           </Button>
         )}

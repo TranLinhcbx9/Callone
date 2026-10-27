@@ -3,10 +3,13 @@ import {
   addExpenseViaUi,
   chooseFromGroupMenu,
   expenseRow,
+  fillExpenseForm,
+  loseResponsesOf,
   openGroupAs,
   openTab,
   pickWhoAmI,
   readSharedLink,
+  rotateLinkLosingResponses,
   shot,
   stubNativeShare,
   tokenFromUrl,
@@ -16,7 +19,9 @@ import { rpc } from './support/seed'
 /**
  * Luồng chính của module Chia tiền qua giao diện thật, chạy với Supabase local (cần .cache/db-ready, xem README):
  * tạo nhóm, chọn "mình là ai", thêm khoản chi (gõ 1tr2, chia riêng), sửa, xóa rồi hoàn tác, đổi tên, chia sẻ,
- * dán link ở trang chủ, link không tồn tại, hai máy cùng sửa một khoản chi, nhóm bị xóa ở máy khác.
+ * dán link ở trang chủ, link không tồn tại, hai máy cùng sửa một khoản chi, mất mạng (nhóm không tải được, lưu khoản chi
+ * lỗi và không lưu ngầm), khoản chi tạo mà mất phản hồi rồi sửa lại, nút quay lại không làm lịch sử dài thêm, đổi link mà mất
+ * phản hồi (mở link cũ, trang chủ, dán link cũ), nhóm bị xóa ở máy khác.
  *
  * Cả file dùng chung MỘT nhóm do test đầu tiên tạo qua giao diện (tạo nhóm bị giới hạn mỗi 10 phút trên toàn hệ thống,
  * mọi test dùng chung), các test chạy nối tiếp và bước sau dựa vào kết quả bước trước. Mỗi test mở context mới nên
@@ -298,6 +303,31 @@ test('link nhóm không tồn tại báo không tìm thấy nhóm', async ({ pag
   await expect(page.getByPlaceholder('Dán link nhóm')).toBeFocused()
 })
 
+test('danh sách nhóm trên máy đã đầy: trang tạo nhóm và trang nhóm báo rõ nhóm sẽ không được lưu', async ({ page }, info) => {
+  // Máy đã lưu đủ 200 nhóm (token giả, hợp lệ về dạng). Nhóm mới không được lưu và không có nhóm cũ nào bị bỏ để lấy chỗ.
+  await page.addInitScript(() => {
+    const recents = Array.from({ length: 200 }, (_, index) => ({
+      token: `Fake${String(index).padStart(3, '0')}`.padEnd(24, 'x'),
+      name: `Nhóm cũ ${index}`,
+      lastOpenedAt: Date.now() - index,
+    }))
+    localStorage.setItem('callone:bill-split:recent-groups', JSON.stringify(recents))
+  })
+
+  // Báo trước khi tạo, để người dùng biết cần tự giữ link.
+  await page.goto('/bill-split/new')
+  await expect(page.getByText('Máy này đã lưu đủ 200 nhóm. Nhóm mới vẫn tạo được')).toBeVisible()
+  await shot(page, info, '24-danh-sach-day-tao-nhom')
+
+  // Mở nhóm bằng link: nhóm không có trong danh sách của máy, và trang nói thẳng điều đó (không chỉ một lần mỗi lần chạy app).
+  await openGroupAs(page, token, ME)
+  const notice = page.getByText('Máy này đã lưu đủ 200 nhóm nên nhóm này không hiện ở trang Chia tiền')
+  await expect(notice).toBeVisible()
+  await openTab(page, 'balances')
+  await expect(notice).toBeVisible()
+  await shot(page, info, '25-danh-sach-day-trang-nhom')
+})
+
 test('hai máy cùng sửa một khoản chi: máy lưu sau nhận thông báo xung đột và thấy bản mới nhất', async ({ page, browser }, info) => {
   const otherContext = await browser.newContext()
   const second = await otherContext.newPage()
@@ -317,7 +347,7 @@ test('hai máy cùng sửa một khoản chi: máy lưu sau nhận thông báo x
     // Máy 2 còn giữ bản cũ và lưu sau: báo người khác vừa sửa, đưa bản mới nhất vào form, không ghi đè.
     await second.locator('#expense-title').fill('Lẩu bò')
     await second.getByRole('button', { name: 'Lưu thay đổi' }).click()
-    await expect(second.getByText('Người khác vừa sửa khoản chi này.')).toBeVisible()
+    await expect(second.getByText('Khoản chi này vừa được sửa ở nơi khác hoặc ở lần lưu trước.')).toBeVisible()
     await expect(second.locator('#expense-title')).toHaveValue('Lẩu nấm')
     await expect(second.getByRole('heading', { name: 'Sửa khoản chi' })).toBeVisible()
     await shot(second, info, '18-xung-dot')
@@ -326,7 +356,7 @@ test('hai máy cùng sửa một khoản chi: máy lưu sau nhận thông báo x
     await second.locator('#expense-title').fill('Lẩu bò')
     await second.getByRole('button', { name: 'Lưu thay đổi' }).click()
     await expect(expenseRow(second, 'Lẩu bò')).toBeVisible()
-    await expect(second.getByText('Người khác vừa sửa khoản chi này.')).toHaveCount(0)
+    await expect(second.getByText('Khoản chi này vừa được sửa ở nơi khác hoặc ở lần lưu trước.')).toHaveCount(0)
 
     // Máy 1 tải lại thấy bản của máy 2.
     await page.reload()
@@ -337,19 +367,107 @@ test('hai máy cùng sửa một khoản chi: máy lưu sau nhận thông báo x
   }
 })
 
+test('khoản chi tạo mà phản hồi bị mất: sửa lại số tiền rồi lưu thì số mới được ghi', async ({ page }, info) => {
+  await openGroupAs(page, token, ME)
+  await page.getByRole('link', { name: 'Thêm khoản chi' }).click()
+  await fillExpenseForm(page, { title: 'Bánh mì', amount: '100k' })
+
+  // Server ghi khoản chi xong nhưng phản hồi không về, cả hai lần tự gửi lại cũng vậy.
+  const restore = await loseResponsesOf(page, 'bs_save_expense', 3)
+  await page.getByRole('button', { name: 'Lưu khoản chi' }).click()
+  await expect(page.getByText('Không có kết nối mạng')).toBeVisible({ timeout: 15_000 })
+  await shot(page, info, '19-tao-mat-phan-hoi')
+
+  // Sửa 100k thành 200k rồi lưu lại. Cùng id nên server coi là gửi lại và trả đúng khoản 100k: app phải nhận ra nội dung khác
+  // và gửi tiếp một lần sửa, không được báo "Đã lưu" trong khi danh sách vẫn hiện 100.000 ₫.
+  await page.locator('#expense-amount').fill('200k')
+  await page.getByRole('button', { name: 'Lưu khoản chi' }).click()
+  await expect(page.getByText('Đã lưu khoản chi')).toBeVisible()
+  await expect(expenseRow(page, 'Bánh mì')).toContainText(/200\.000\s₫/)
+  await expect(expenseRow(page, 'Bánh mì')).not.toContainText(/100\.000\s₫/)
+  await restore()
+})
+
+test('mất mạng: nhóm chưa tải được báo lỗi có nút Thử lại, có mạng lại thì mở được', async ({ page, context }, info) => {
+  await openGroupAs(page, token, ME)
+  // Nạp sẵn mã của trang nhóm (đi qua một link không tồn tại) rồi về trang Chia tiền bằng điều hướng trong app. Nhóm thật
+  // chưa từng được tải ở lần mở app này, và mất mạng không làm hỏng việc nạp mã trang.
+  await page.goto('/bill-split/g/AAAAAAAAAAAAAAAAAAAAAAAA')
+  await expect(page.getByRole('heading', { name: 'Không tìm thấy nhóm' })).toBeVisible()
+  await page.getByRole('link', { name: 'Quay lại' }).click()
+  const card = page.getByRole('link', { name: new RegExp(groupName) })
+  await expect(card).toBeVisible()
+
+  await context.setOffline(true)
+  await card.click()
+  // Không treo ở "Đang tải nhóm…" mãi: báo lỗi và cho thử lại.
+  await expect(page.getByRole('heading', { name: 'Không tải được nhóm' })).toBeVisible()
+  await shot(page, info, '20-mat-mang-khong-tai-duoc-nhom')
+
+  await context.setOffline(false)
+  await page.getByRole('button', { name: 'Thử lại' }).click()
+  await expect(page.getByRole('heading', { name: groupName })).toBeVisible()
+})
+
+test('mất mạng: lưu khoản chi báo lỗi rõ ràng và không tự lưu khi có mạng lại', async ({ page, context }, info) => {
+  await openGroupAs(page, token, ME)
+  await page.getByRole('link', { name: 'Thêm khoản chi' }).click()
+  await fillExpenseForm(page, { title: 'Khoản mất mạng', amount: '77k' })
+
+  await context.setOffline(true)
+  await page.getByRole('button', { name: 'Lưu khoản chi' }).click()
+  await expect(page.getByText('Không có kết nối mạng')).toBeVisible({ timeout: 15_000 })
+  // Không kẹt ở "Đang lưu…": nút bấm lại được và form còn nguyên những gì đã nhập.
+  await expect(page.getByRole('button', { name: 'Lưu khoản chi' })).toBeEnabled()
+  await expect(page.locator('#expense-title')).toHaveValue('Khoản mất mạng')
+  await shot(page, info, '21-mat-mang-luu-khoan-chi')
+
+  // Bỏ thay đổi rồi có mạng lại: không được có khoản chi nào tự lưu sau lưng (lệnh ghi bị tạm dừng sẽ chạy khi có mạng).
+  await page.getByRole('button', { name: 'Đóng' }).click()
+  await page.getByRole('dialog', { name: 'Bỏ thay đổi?' }).getByRole('button', { name: 'Bỏ thay đổi' }).click()
+  await context.setOffline(false)
+  await page.waitForTimeout(2_000)
+  await page.reload()
+  await expect(page.getByRole('heading', { name: groupName })).toBeVisible()
+  await expect(expenseRow(page, 'Khoản mất mạng')).toHaveCount(0)
+})
+
+test('mũi tên quay lại trong app lùi lịch sử thay vì thêm mục mới', async ({ page }) => {
+  // Mở thẳng bằng link: không có trang cha phía trước, nên mũi tên thay mục hiện tại bằng trang Chia tiền.
+  await openGroupAs(page, token, ME)
+  await page.getByRole('link', { name: 'Quay lại' }).click()
+  await expect(page).toHaveURL(/\/bill-split$/)
+  await page.goBack()
+  await expect(page).toHaveURL('about:blank')
+
+  // Đi từ trang Chia tiền vào nhóm rồi bấm mũi tên: lùi về mục trước. Back của trình duyệt sau đó rời hẳn app,
+  // không nảy ngược vào trang nhóm.
+  await page.goto('/bill-split')
+  const card = page.getByRole('link', { name: new RegExp(groupName) })
+  await card.click()
+  await expect(page).toHaveURL(new RegExp(`/g/${token}$`))
+  await page.getByRole('link', { name: 'Quay lại' }).click()
+  await expect(page).toHaveURL(/\/bill-split$/)
+  await page.goBack()
+  await expect(page).toHaveURL('about:blank')
+
+  // Dấu X của trang tạo nhóm cũng vậy.
+  await page.goto('/bill-split')
+  await expect(card).toBeVisible()
+  await page.getByRole('link', { name: 'Tạo nhóm mới' }).click()
+  await expect(page).toHaveURL(/\/bill-split\/new$/)
+  await page.getByRole('link', { name: 'Đóng' }).click()
+  await expect(page).toHaveURL(/\/bill-split$/)
+  await page.goBack()
+  await expect(page).toHaveURL('about:blank')
+})
+
 test('đổi link mà phản hồi bị mất: mở lại link cũ thì app tự chuyển sang link mới', async ({ page, browser }, info) => {
   await openGroupAs(page, token, ME)
   await openTab(page, 'members')
 
   // Server đổi link xong nhưng phản hồi không về tới máy này, cả hai lần tự gửi lại cũng vậy.
-  await page.route('**/rest/v1/rpc/bs_rotate_token', async (route) => {
-    await route.fetch()
-    await route.abort('failed')
-  })
-  await page.getByRole('button', { name: 'Đổi link mới' }).click()
-  await page.getByRole('alertdialog').getByRole('button', { name: 'Đổi link', exact: true }).click()
-  await expect(page.getByText('Mất kết nối khi đổi link')).toBeVisible({ timeout: 15_000 })
-  await page.unroute('**/rest/v1/rpc/bs_rotate_token')
+  await rotateLinkLosingResponses(page)
 
   // Máy chưa biết link mới, mà link cũ đã chết. Mở lại link cũ: app hỏi server rồi chuyển sang link mới, giữ nguyên tab.
   const oldToken = token
@@ -372,6 +490,57 @@ test('đổi link mà phản hồi bị mất: mở lại link cũ thì app tự
   }
 })
 
+test('đổi link mà phản hồi bị mất: trang chủ tự tìm lại nhóm, không xếp vào "Không còn mở được"', async ({ page }, info) => {
+  await openGroupAs(page, token, ME)
+  await openTab(page, 'members')
+  const oldToken = token
+  await rotateLinkLosingResponses(page)
+
+  // Rời trang nhóm ngay trong app, không tải lại. Hỏi bằng token cũ thì server nói "không có", nhưng nhóm còn dưới token mới:
+  // app phải hỏi về token mới trước khi kết luận, không được xếp nhóm vào "Không còn mở được" (chỉ có nút xóa khỏi máy, mà xóa
+  // là mất luôn token mới).
+  await page.getByRole('link', { name: 'Quay lại' }).click()
+  const card = page.getByRole('link', { name: new RegExp(groupName) })
+  await expect(card).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Không còn mở được' })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Chưa kiểm tra được' })).toHaveCount(0)
+  await shot(page, info, '22-doi-link-trang-chu-tu-tim-lai')
+
+  await card.click()
+  await expect.poll(() => tokenFromUrl(page)).not.toBe(oldToken)
+  token = tokenFromUrl(page)
+  await expect(page.getByRole('heading', { name: groupName })).toBeVisible()
+})
+
+test('đổi link mà phản hồi bị mất và chưa hỏi được server: không cho xóa khỏi máy, dán link cũ vẫn mở được nhóm', async ({ page }, info) => {
+  await openGroupAs(page, token, ME)
+  await openTab(page, 'members')
+  const oldToken = token
+  await rotateLinkLosingResponses(page)
+
+  // Chặn riêng lần hỏi link mới (bs_get_groups với hai token: cũ và mới), còn danh sách nhóm (một token) vẫn chạy.
+  await page.route('**/rest/v1/rpc/bs_get_groups', async (route) => {
+    const body = route.request().postDataJSON() as { p_tokens?: string[] } | null
+    if (body?.p_tokens?.length === 2) await route.abort('failed')
+    else await route.continue()
+  })
+  await page.getByRole('link', { name: 'Quay lại' }).click()
+  await expect(page.getByRole('heading', { name: 'Chưa kiểm tra được' })).toBeVisible()
+  await expect(page.getByRole('link', { name: new RegExp(groupName) })).toBeVisible()
+  // Còn lần đổi link đang chờ thì không mời xóa khỏi máy: xóa là mất luôn token mới.
+  await expect(page.getByRole('button', { name: /Xóa .* khỏi máy này/ })).toHaveCount(0)
+  await shot(page, info, '23-chua-kiem-tra-duoc')
+
+  // Có mạng lại, dán đúng link cũ: link cũ đã chết, app hỏi về token mới rồi mở nhóm bằng link mới.
+  await page.unroute('**/rest/v1/rpc/bs_get_groups')
+  await page.getByPlaceholder('Dán link nhóm').fill(new URL(`/bill-split/g/${oldToken}`, page.url()).toString())
+  await page.getByRole('button', { name: 'Mở nhóm' }).click()
+  await page.waitForURL(/\/bill-split\/g\/[A-Za-z0-9_-]{24}/)
+  expect(tokenFromUrl(page)).not.toBe(oldToken)
+  token = tokenFromUrl(page)
+  await expect(page.getByRole('heading', { name: groupName })).toBeVisible()
+})
+
 test('nhóm bị xóa ở một máy: máy khác thấy "Không còn mở được" và xóa khỏi máy', async ({ page, browser }, info) => {
   const otherContext = await browser.newContext()
   const second = await otherContext.newPage()
@@ -385,7 +554,8 @@ test('nhóm bị xóa ở một máy: máy khác thấy "Không còn mở đư�
     await page.getByRole('button', { name: 'Xóa nhóm' }).click()
     const confirm = page.getByRole('dialog', { name: 'Xóa nhóm?' })
     await expect(confirm.getByRole('button', { name: 'Xóa nhóm' })).toBeDisabled()
-    await confirm.getByLabel('Gõ tên nhóm để xác nhận').fill(groupName)
+    // Gõ chữ hoa cả tên: so khớp không phân biệt hoa thường.
+    await confirm.getByLabel('Gõ tên nhóm để xác nhận').fill(groupName.toLocaleUpperCase('vi-VN'))
     await shot(page, info, '20-xoa-nhom')
     await confirm.getByRole('button', { name: 'Xóa nhóm' }).click()
     await expect(page).toHaveURL(/\/bill-split$/)

@@ -100,8 +100,9 @@ export async function addExpenseViaUi(page: Page, expense: ExpenseToAdd): Promis
 }
 
 /**
- * Dòng của một khoản chi trong danh sách, tìm theo tiêu đề. Dòng là thẻ <a> nhưng UI kit đặt role="listitem"
- * lên nó nên không tìm được bằng getByRole('link').
+ * Dòng của một khoản chi trong danh sách, tìm theo tiêu đề. Dòng là một liên kết (thẻ <a> trong div role="listitem") tới
+ * /expense/<id>, nên getByRole('link') cũng tìm được. Chọn theo href để không lẫn với các liên kết khác của trang, và lọc theo
+ * tiêu đề để không lẫn với liên kết "Thêm khoản chi" (cũng nằm dưới /expense/).
  */
 export function expenseRow(page: Page, title: string): Locator {
   return page.locator('a[href*="/expense/"]').filter({ hasText: title })
@@ -139,4 +140,36 @@ export async function stubNativeShare(page: Page): Promise<void> {
 /** Dữ liệu navigator.share đã được gọi với (sau stubNativeShare), hoặc null nếu chưa gọi. */
 export async function readSharedLink(page: Page): Promise<{ url?: string; title?: string } | null> {
   return page.evaluate(() => (window as unknown as { __shared?: { url?: string; title?: string } }).__shared ?? null)
+}
+
+/**
+ * Làm cho phản hồi của một hàm RPC "mất giữa đường": yêu cầu vẫn tới server và được ghi (route.fetch), nhưng trình duyệt
+ * nhận lỗi mạng. `times` lần đầu như vậy, các lần sau đi qua bình thường. Trả về hàm gỡ.
+ * Đây là cách dựng lại đúng tình huống rớt mạng sau khi server đã ghi xong, thứ không thể có nếu chỉ chặn yêu cầu.
+ */
+export async function loseResponsesOf(page: Page, rpcName: string, times = Number.POSITIVE_INFINITY): Promise<() => Promise<void>> {
+  const pattern = `**/rest/v1/rpc/${rpcName}`
+  let remaining = times
+  await page.route(pattern, async (route) => {
+    if (remaining <= 0) {
+      await route.continue()
+      return
+    }
+    remaining -= 1
+    await route.fetch()
+    await route.abort('failed')
+  })
+  return () => page.unroute(pattern)
+}
+
+/**
+ * Từ tab Thành viên: đổi link nhóm mà phản hồi bị mất (cả hai lần tự gửi lại cũng vậy). Server đã đổi token xong nhưng máy
+ * này chưa biết token mới: lần đổi link nằm trong danh sách "đang chờ" của máy. Xong thì phản hồi lại bình thường.
+ */
+export async function rotateLinkLosingResponses(page: Page): Promise<void> {
+  const restore = await loseResponsesOf(page, 'bs_rotate_token')
+  await page.getByRole('button', { name: 'Đổi link mới' }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Đổi link', exact: true }).click()
+  await expect(page.getByText('Mất kết nối khi đổi link')).toBeVisible({ timeout: 15_000 })
+  await restore()
 }

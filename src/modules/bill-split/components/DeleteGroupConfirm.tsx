@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { sameName } from '@/modules/bill-split/domain/groupForm'
 import { ResponsiveDialog } from '@/shared/ui/ResponsiveDialog'
 import { Spinner } from '@/shared/ui/Spinner'
 import { Button } from '@/shared/ui/button'
@@ -12,10 +13,13 @@ export interface DeleteGroupConfirmProps {
   isDeleting?: boolean
 }
 
-/** Xóa nhóm phải gõ lại đúng tên nhóm. Chữ đã gõ chỉ là trạng thái nội bộ của hộp thoại này. */
+/**
+ * Xóa nhóm phải gõ lại đúng tên nhóm. So khớp bỏ qua hoa thường, khoảng trắng thừa và khác biệt NFC/NFD không nhìn thấy
+ * (xem sameName), nhưng vẫn phải đúng dấu. Chữ đã gõ chỉ là trạng thái nội bộ của hộp thoại này.
+ */
 export function DeleteGroupConfirm({ open, onOpenChange, groupName, onConfirm, isDeleting }: DeleteGroupConfirmProps) {
   const [typed, setTyped] = useState('')
-  const matches = typed.trim() === groupName.trim()
+  const matches = sameName(typed, groupName)
 
   return (
     <ResponsiveDialog

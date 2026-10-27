@@ -121,14 +121,15 @@ export function ExpenseFormView({
                 aria-checked={selected}
                 onClick={() => onChange({ paidBy: member.id })}
                 className={cn(
-                  'inline-flex h-10 items-center gap-2 rounded-full border pr-4 pl-1.5 text-body transition-[background-color,border-color,color] duration-150 outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
+                  // max-w-full và truncate: tên dài không có dấu cách (360px) không được đẩy chip ra ngoài màn hình.
+                  'inline-flex h-10 max-w-full items-center gap-2 rounded-full border pr-4 pl-1.5 text-body transition-[background-color,border-color,color] duration-150 outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
                   selected
                     ? 'border-primary/50 bg-primary-soft font-medium text-primary-soft-foreground'
                     : 'border-border bg-card hover:bg-accent/60',
                 )}
               >
                 <MemberAvatar name={member.name} colorKey={member.id} size="sm" />
-                {member.name}
+                <span className="min-w-0 truncate">{member.name}</span>
               </button>
             )
           })}

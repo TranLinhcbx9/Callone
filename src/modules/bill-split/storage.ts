@@ -4,7 +4,9 @@
  *   Trên iOS PWA danh sách này là cách duy nhất để quay lại một nhóm, nên không bao giờ tự xóa nhóm cũ để lấy chỗ:
  *   đầy thì rememberGroup từ chối nhóm mới và báo 'full', người dùng tự quên bớt nhóm.
  * - "Mình là ai" trong từng nhóm: token thành memberId.
- * - Thông tin ngân hàng nhập lần gần nhất, ở dạng đã chuẩn hóa đúng như rpc.ts gửi lên server, để điền sẵn khi thêm người mới.
+ * - Ngân hàng nhập lần gần nhất, để điền sẵn ô ngân hàng khi thêm người mới. CHỈ lưu mã BIN: số tài khoản và tên chủ
+ *   tài khoản của người vừa lưu (thường là bạn bè) không nằm lại trên máy này. Dữ liệu cũ còn kèm hai trường đó thì bị
+ *   cắt bỏ ngay lần đọc đầu tiên, cả trong bộ nhớ lẫn trong localStorage.
  * - Lần đổi link đang chờ server xác nhận: token cũ thành { newToken, startedAt }. Token mới được ghi xuống đây
  *   TRƯỚC khi gọi server, để mất phản hồi giữa chừng không làm mất link mới (xem beginRotation).
  *
@@ -13,7 +15,6 @@
  * Store có subscribe và getter trả cùng một tham chiếu khi không đổi, dùng được với useSyncExternalStore.
  */
 import { BS_LIMITS, TOKEN_PATTERN } from '@/modules/bill-split/api/contract'
-import { normalizeBankAccount } from '@/modules/bill-split/domain/bankAccount'
 import type { BankAccount } from '@/modules/bill-split/domain/types'
 import { createModuleStorage, type ModuleStorage } from '@/shared/lib/storage'
 
@@ -79,14 +80,21 @@ export function readMeMap(raw: unknown): Record<string, string> {
   return result
 }
 
-/** Thông tin ngân hàng từ dữ liệu thô, null nếu thiếu hoặc sai hình dạng. */
-export function readBank(raw: unknown): BankAccount | null {
+/**
+ * Ngân hàng gần nhất từ dữ liệu thô: chỉ lấy mã BIN, null nếu thiếu hoặc BIN sai. Giữ hình dạng BankAccount cho
+ * người đọc cũ (useLastBank), nhưng accountNumber luôn rỗng và accountName luôn null: số tài khoản và tên chủ tài khoản
+ * của người đã lưu không được nhớ lại, kể cả khi dữ liệu cũ còn chứa chúng.
+ */
+export function readLastBank(raw: unknown): BankAccount | null {
   if (!isRecord(raw)) return null
-  const { bin, accountNumber, accountName } = raw
+  const { bin } = raw
   if (typeof bin !== 'string' || !/^\d{6}$/.test(bin)) return null
-  if (typeof accountNumber !== 'string' || !/^[0-9A-Za-z]{1,19}$/.test(accountNumber)) return null
-  if (accountName !== null && accountName !== undefined && typeof accountName !== 'string') return null
-  return { bin, accountNumber, accountName: accountName ? accountName.slice(0, BS_LIMITS.bankAccountName) : null }
+  return { bin, accountNumber: '', accountName: null }
+}
+
+/** Dữ liệu thô của last-bank đã đúng dạng mới: một object chỉ có đúng khóa bin. */
+function isBinOnly(raw: unknown): boolean {
+  return isRecord(raw) && Object.keys(raw).length === 1 && Object.hasOwn(raw, 'bin')
 }
 
 /** Bảng token cũ thành lần đổi link đang chờ từ dữ liệu thô, bỏ mục sai hình dạng hoặc có token mới trùng token cũ. */
@@ -129,8 +137,9 @@ export interface BillSplitStore {
   replaceToken(oldToken: string, newToken: string): void
   getMe(token: string): string | null
   setMe(token: string, memberId: string | null): void
+  /** Ngân hàng nhập gần nhất. Chỉ có bin là thật: accountNumber luôn rỗng và accountName luôn null (xem đầu file). */
   getLastBank(): BankAccount | null
-  /** Nhớ ngân hàng vừa nhập, ở dạng đã chuẩn hóa như lúc gửi lên server. Dữ liệu sai thì xóa ngân hàng đã nhớ. */
+  /** Nhớ ngân hàng vừa nhập, chỉ giữ mã BIN. null hoặc BIN sai thì xóa ngân hàng đã nhớ. */
   setLastBank(bank: BankAccount | null): void
   /** Lần đổi link đang chờ server xác nhận cho token này, hoặc null. Cùng một tham chiếu cho tới khi đổi. */
   getPendingRotation(oldToken: string): PendingRotation | null
@@ -173,12 +182,27 @@ export function createBillSplitStore(options: BillSplitStoreOptions = {}): BillS
   let state: State | null = null
   const listeners = new Set<() => void>()
 
+  /**
+   * Dữ liệu last-bank của bản cũ còn kèm số tài khoản và tên chủ tài khoản. Ghi đè bằng đúng phần BIN ngay lần đọc đầu
+   * tiên để hai trường đó không nằm lại trong localStorage; sai hình dạng thì xóa hẳn khóa.
+   */
+  const scrubLastBank = (raw: unknown, lastBank: BankAccount | null) => {
+    if (raw === null || raw === undefined) return
+    if (lastBank === null) storage.remove(KEYS.lastBank)
+    else if (!isBinOnly(raw)) storage.set(KEYS.lastBank, { bin: lastBank.bin })
+  }
+
   const current = (): State => {
-    state ??= {
-      recents: readRecentGroups(storage.get<unknown>(KEYS.recents, null)),
-      me: readMeMap(storage.get<unknown>(KEYS.me, null)),
-      lastBank: readBank(storage.get<unknown>(KEYS.lastBank, null)),
-      pending: readPendingRotations(storage.get<unknown>(KEYS.pending, null)),
+    if (state === null) {
+      const rawBank = storage.get<unknown>(KEYS.lastBank, null)
+      const lastBank = readLastBank(rawBank)
+      scrubLastBank(rawBank, lastBank)
+      state = {
+        recents: readRecentGroups(storage.get<unknown>(KEYS.recents, null)),
+        me: readMeMap(storage.get<unknown>(KEYS.me, null)),
+        lastBank,
+        pending: readPendingRotations(storage.get<unknown>(KEYS.pending, null)),
+      }
     }
     return state
   }
@@ -189,7 +213,7 @@ export function createBillSplitStore(options: BillSplitStoreOptions = {}): BillS
     if (changed.includes('recents')) storage.set(KEYS.recents, next.recents)
     if (changed.includes('me')) storage.set(KEYS.me, next.me)
     if (changed.includes('lastBank')) {
-      if (next.lastBank) storage.set(KEYS.lastBank, next.lastBank)
+      if (next.lastBank) storage.set(KEYS.lastBank, { bin: next.lastBank.bin })
       else storage.remove(KEYS.lastBank)
     }
     if (changed.includes('pending')) {
@@ -269,7 +293,8 @@ export function createBillSplitStore(options: BillSplitStoreOptions = {}): BillS
     getLastBank: () => current().lastBank,
 
     setLastBank(bank) {
-      commit({ ...current(), lastBank: bank ? readBank(normalizeBankAccount(bank)) : null }, ['lastBank'])
+      // Chỉ lấy bin: số tài khoản và tên chủ tài khoản bị bỏ ngay ở đây, không đi vào bộ nhớ lẫn localStorage.
+      commit({ ...current(), lastBank: bank ? readLastBank({ bin: bank.bin }) : null }, ['lastBank'])
     },
 
     getPendingRotation: (oldToken) => own(current().pending, oldToken) ?? null,

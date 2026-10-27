@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   mergeMemberNames,
   normalizeName,
+  sameName,
   validateCreateGroup,
   validateGroupName,
   validateMemberNames,
@@ -104,5 +105,26 @@ describe('mergeMemberNames', () => {
 
   it('gộp khoảng trắng bên trong tên', () => {
     expect(mergeMemberNames([], 'Văn   Linh')).toEqual(['Văn Linh'])
+  })
+})
+
+describe('sameName', () => {
+  it('bỏ qua hoa thường, khoảng trắng thừa ở hai đầu và ở giữa', () => {
+    expect(sameName('Đà Lạt 3N2Đ', 'đà lạt 3n2đ')).toBe(true)
+    expect(sameName('  Đà   Lạt  ', 'Đà Lạt')).toBe(true)
+    expect(sameName('ĐÀ LẠT', 'Đà Lạt')).toBe(true)
+  })
+
+  it('dạng NFC và dạng tổ hợp dấu (NFD) của cùng một chữ là một', () => {
+    const composed = 'Đà Lạt Hưng'
+    expect(sameName(composed.normalize('NFD'), composed)).toBe(true)
+    expect(sameName(composed.normalize('NFD'), composed.toUpperCase())).toBe(true)
+  })
+
+  it('vẫn phân biệt dấu và chữ khác', () => {
+    expect(sameName('Hung', 'Hưng')).toBe(false)
+    expect(sameName('Đà Lạt', 'Da Lat')).toBe(false)
+    expect(sameName('Đà Lạt', 'Đà Lạt 2')).toBe(false)
+    expect(sameName('', 'Đà Lạt')).toBe(false)
   })
 })

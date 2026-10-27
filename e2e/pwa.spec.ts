@@ -190,7 +190,11 @@ test('header bảo mật đúng và không có vi phạm CSP ở trang chủ và
     expect(csp.get('object-src')).toEqual(["'none'"])
     expect(csp.get('frame-ancestors')).toEqual(["'none'"])
     expect(csp.get('base-uri')).toEqual(["'self'"])
-    expect(csp.get('connect-src')).toEqual(expect.arrayContaining(["'self'", 'https://*.supabase.co']))
+    const connectSrc = csp.get('connect-src') ?? []
+    expect(connectSrc).toContain("'self'")
+    // Chỉ đúng project Supabase đang dùng, không mở cho mọi *.supabase.co.
+    expect(connectSrc.some((source) => /^https:\/\/[a-z0-9]{20}\.supabase\.co$/.test(source))).toBe(true)
+    expect(connectSrc.some((source) => source.includes('*'))).toBe(false)
 
     // Service worker đăng ký và kích hoạt dưới đúng CSP này (worker-src 'self').
     await waitForActiveServiceWorker(page)

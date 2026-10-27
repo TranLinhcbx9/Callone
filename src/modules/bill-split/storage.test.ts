@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   MAX_RECENT_GROUPS,
   createBillSplitStore,
-  readBank,
+  readLastBank,
   readMeMap,
   readPendingRotations,
   readRecentGroups,
@@ -93,7 +93,7 @@ describe('readPendingRotations', () => {
   })
 })
 
-describe('readMeMap và readBank', () => {
+describe('readMeMap và readLastBank', () => {
   it('readMeMap giữ mục hợp lệ', () => {
     expect(readMeMap({ [T1]: 'member-1', ngan: 'x', [T2]: 5, [T3]: '', ['x'.repeat(24)]: 'y'.repeat(65) })).toEqual({
       [T1]: 'member-1',
@@ -101,13 +101,13 @@ describe('readMeMap và readBank', () => {
     for (const raw of [null, [], 'x', 3]) expect(readMeMap(raw)).toEqual({})
   })
 
-  it('readBank kiểm tra BIN và số tài khoản', () => {
-    const ok = { bin: '970436', accountNumber: '0123456789', accountName: 'NGUYEN VAN LINH' }
-    expect(readBank(ok)).toEqual(ok)
-    expect(readBank({ ...ok, accountName: null })).toEqual({ ...ok, accountName: null })
-    expect(readBank({ bin: ok.bin, accountNumber: ok.accountNumber })).toEqual({ ...ok, accountName: null })
-    for (const bad of [null, 'x', { ...ok, bin: '97043' }, { ...ok, accountNumber: '' }, { ...ok, accountNumber: '12 34' }, { ...ok, accountName: 5 }]) {
-      expect(readBank(bad), JSON.stringify(bad)).toBeNull()
+  it('readLastBank chỉ lấy BIN: bỏ số tài khoản và tên chủ tài khoản của dữ liệu cũ, từ chối BIN sai', () => {
+    const noAccount = { bin: '970436', accountNumber: '', accountName: null }
+    expect(readLastBank({ bin: '970436' })).toEqual(noAccount)
+    expect(readLastBank({ bin: '970436', accountNumber: '0123456789', accountName: 'NGUYEN VAN LINH' })).toEqual(noAccount)
+    expect(readLastBank({ bin: '970436', accountNumber: 5, accountName: 5 })).toEqual(noAccount)
+    for (const bad of [null, undefined, 'x', 5, [], {}, { bin: '97043' }, { bin: 970436 }, { bin: '97043a' }, { accountNumber: '1' }]) {
+      expect(readLastBank(bad), JSON.stringify(bad)).toBeNull()
     }
   })
 })
@@ -194,7 +194,7 @@ describe('createBillSplitStore: nhóm gần đây', () => {
     const reopened = create()
     expect(reopened.getRecentGroups()).toEqual(store.getRecentGroups())
     expect(reopened.getMe(T1)).toBe('member-1')
-    expect(reopened.getLastBank()).toEqual({ bin: '970436', accountNumber: '0123456789', accountName: null })
+    expect(reopened.getLastBank()).toEqual({ bin: '970436', accountNumber: '', accountName: null })
 
     backend.data.set(KEY('recent-groups'), '{không phải json')
     backend.data.set(KEY('me'), JSON.stringify({ [T1]: 5 }))
@@ -292,12 +292,12 @@ describe('createBillSplitStore: mình là ai và ngân hàng gần nhất', () =
     expect(store.getMe('ngan')).toBeNull()
   })
 
-  it('nhớ ngân hàng nhập gần nhất, xóa được, từ chối dữ liệu sai', () => {
+  it('nhớ ngân hàng nhập gần nhất, xóa được, từ chối BIN sai', () => {
     const { store, backend } = setup()
     const bank = { bin: '970436', accountNumber: '0123456789', accountName: 'NGUYEN VAN LINH' }
     store.setLastBank(bank)
-    expect(store.getLastBank()).toEqual(bank)
-    expect(JSON.parse(backend.data.get(KEY('last-bank')) ?? 'null')).toEqual(bank)
+    expect(store.getLastBank()).toEqual({ bin: '970436', accountNumber: '', accountName: null })
+    expect(JSON.parse(backend.data.get(KEY('last-bank')) ?? 'null')).toEqual({ bin: '970436' })
 
     store.setLastBank({ ...bank, bin: 'sai' })
     expect(store.getLastBank()).toBeNull()
@@ -306,40 +306,68 @@ describe('createBillSplitStore: mình là ai và ngân hàng gần nhất', () =
     store.setLastBank(bank)
     store.setLastBank(null)
     expect(store.getLastBank()).toBeNull()
+    expect(backend.data.has(KEY('last-bank'))).toBe(false)
   })
 
-  it('nhớ ngân hàng ở dạng đã chuẩn hóa như rpc.ts gửi lên, nên số tài khoản có dấu cách không bị từ chối rồi xóa mất', () => {
+  it('riêng tư: số tài khoản và tên chủ tài khoản của người vừa lưu không nằm lại trong bộ nhớ lẫn localStorage', () => {
     const { store, backend, create } = setup()
-    store.setLastBank({ bin: '970436', accountNumber: '0123 456 789', accountName: 'Nguyễn Văn Dũng' })
-    const normalized = { bin: '970436', accountNumber: '0123456789', accountName: 'NGUYEN VAN DUNG' }
-    expect(store.getLastBank()).toEqual(normalized)
-    expect(JSON.parse(backend.data.get(KEY('last-bank')) ?? 'null')).toEqual(normalized)
-    expect(create().getLastBank()).toEqual(normalized)
+    const junk = String.fromCodePoint(0xa0, 0x200b, 0x2060, 0xfeff)
+    store.setLastBank({ bin: '970436', accountNumber: `0123 456${junk}789`, accountName: 'Nguyễn Văn Dũng' })
 
-    store.setLastBank({ bin: '970422', accountNumber: ' 9 8 7 ', accountName: '   ' })
-    expect(store.getLastBank()).toEqual({ bin: '970422', accountNumber: '987', accountName: null })
+    expect(store.getLastBank()).toEqual({ bin: '970436', accountNumber: '', accountName: null })
+    const everythingOnDisk = [...backend.data.values()].join(' ')
+    expect(everythingOnDisk).not.toMatch(/0123|456|789|NGUYEN|Nguy|Dũng|DUNG/)
+    expect(create().getLastBank()).toEqual({ bin: '970436', accountNumber: '', accountName: null })
+
+    // Lưu thêm người khác (hoặc cùng ngân hàng) cũng chỉ còn BIN.
+    store.setLastBank({ bin: '970422', accountNumber: ' 9 8 7 ', accountName: 'Trần Thị B' })
+    expect(JSON.parse(backend.data.get(KEY('last-bank')) ?? 'null')).toEqual({ bin: '970422' })
   })
 
-  it('số tài khoản dán kèm NBSP và ký tự vô hình cũng được nhớ ở dạng sạch', () => {
+  it('chỉ cần BIN đúng: số tài khoản hay tên chủ tài khoản sai dạng cũng không làm mất ngân hàng đã nhớ', () => {
     const { store } = setup()
-    const junk = String.fromCodePoint(0xa0, 0x200b, 0x200e, 0x2060, 0xfeff)
-    store.setLastBank({ bin: '970436', accountNumber: `${junk}0123 456${junk}789`, accountName: null })
-    expect(store.getLastBank()).toEqual({ bin: '970436', accountNumber: '0123456789', accountName: null })
+    store.setLastBank({ bin: '970436', accountNumber: '', accountName: null })
+    expect(store.getLastBank()).toEqual({ bin: '970436', accountNumber: '', accountName: null })
+    store.setLastBank({ bin: '970422', accountNumber: '01-23', accountName: 'x'.repeat(200) })
+    expect(store.getLastBank()?.bin).toBe('970422')
   })
 
-  it('ngân hàng mà sau chuẩn hóa vẫn sai (BIN sai, số tài khoản rỗng hoặc dài quá 19) thì xóa ngân hàng đã nhớ', () => {
-    const { store } = setup()
-    const good = { bin: '970436', accountNumber: '0123456789', accountName: null }
-    for (const bad of [
-      { ...good, bin: '97043' },
-      { ...good, accountNumber: '   ' },
-      { ...good, accountNumber: '1234 5678 9012 3456 7890' },
-      { ...good, accountNumber: '01-23' },
-    ]) {
-      store.setLastBank(good)
-      store.setLastBank(bad)
-      expect(store.getLastBank(), JSON.stringify(bad)).toBeNull()
+  it('dữ liệu cũ còn kèm số tài khoản và tên: đọc ra chỉ còn BIN và localStorage được ghi đè ngay, không còn hai trường đó', () => {
+    const { create, backend } = setup()
+    backend.data.set(
+      KEY('last-bank'),
+      JSON.stringify({ bin: '970436', accountNumber: '0123456789', accountName: 'NGUYEN VAN LINH' }),
+    )
+
+    const store = create()
+    expect(store.getLastBank()).toEqual({ bin: '970436', accountNumber: '', accountName: null })
+    expect(JSON.parse(backend.data.get(KEY('last-bank')) ?? 'null')).toEqual({ bin: '970436' })
+    expect([...backend.data.values()].join(' ')).not.toMatch(/0123456789|NGUYEN/)
+  })
+
+  it('dữ liệu cũ sai hình dạng (BIN sai, không phải object) bị xóa hẳn khỏi localStorage; chưa có gì thì không ghi gì', () => {
+    const { create, backend } = setup()
+    for (const raw of [{ bin: 'x', accountNumber: '0123456789' }, 'chuỗi', 5, [], { accountNumber: '0123456789' }]) {
+      backend.data.set(KEY('last-bank'), JSON.stringify(raw))
+      expect(create().getLastBank(), JSON.stringify(raw)).toBeNull()
+      expect(backend.data.has(KEY('last-bank')), JSON.stringify(raw)).toBe(false)
     }
+    backend.data.clear()
+    expect(create().getLastBank()).toBeNull()
+    expect(backend.data.size).toBe(0)
+  })
+
+  it('dữ liệu đã đúng dạng mới thì đọc lại không ghi thêm gì', () => {
+    const { create, backend } = setup()
+    backend.data.set(KEY('last-bank'), JSON.stringify({ bin: '970436' }))
+    const writes: string[] = []
+    const original = backend.setItem
+    backend.setItem = (key, value) => {
+      writes.push(key)
+      original(key, value)
+    }
+    expect(create().getLastBank()?.bin).toBe('970436')
+    expect(writes).toEqual([])
   })
 })
 

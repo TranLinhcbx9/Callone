@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { LinkIcon, RefreshCwIcon, ShareIcon } from 'lucide-react'
+import { canShareNatively } from '@/modules/bill-split/hooks/useShareGroup'
 import { CopyButton } from '@/shared/ui/CopyButton'
 import { Spinner } from '@/shared/ui/Spinner'
 import {
@@ -21,7 +22,10 @@ export interface ShareLinkCardProps {
   /** Đổi sang link mới, link cũ hết hiệu lực. Không truyền thì ẩn dòng đổi link. */
   onRotate?: () => void
   isRotating?: boolean
-  /** Ép hiện hoặc ẩn nút Chia sẻ. Mặc định hiện khi trình duyệt có navigator.share (điện thoại). */
+  /**
+   * Ép hiện hoặc ẩn nút Chia sẻ. Mặc định hiện khi trình duyệt có navigator.share và đang dùng cảm ứng (điện thoại,
+   * máy tính bảng). Trên máy tính chỉ có "Sao chép link", dù Edge hay Safari trên máy tính cũng có navigator.share.
+   */
   canShare?: boolean
   /** Gọi sau khi sao chép link thành công (nơi gọi hiện toast "Đã chép link"). */
   onCopied?: () => void
@@ -31,7 +35,7 @@ export interface ShareLinkCardProps {
 export function ShareLinkCard({ url, groupName, onRotate, isRotating, canShare, onCopied }: ShareLinkCardProps) {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const rotateButtonRef = useRef<HTMLButtonElement>(null)
-  const nativeShare = canShare ?? (typeof navigator !== 'undefined' && typeof navigator.share === 'function')
+  const nativeShare = canShare ?? canShareNatively()
 
   async function share() {
     try {
